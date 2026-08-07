@@ -1,0 +1,64 @@
+# Environments
+.env
+.venv
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+.uv/
+
+# Secrets & credentials
+.logfire/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+
+
+models/
+model_cache/
+transformers_cache/
+hf_cache/
+huggingface/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx
+*.bin
+
+
+# ✅ Logs (chat logs, system logs)
+logs/
+*.log
+chat_logs/
+debug.log
+error.log
+
+# Generated ingestion output
+processed_data/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
