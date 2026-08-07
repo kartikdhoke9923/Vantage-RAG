@@ -5,7 +5,8 @@ load_dotenv()
 class Settings:
     # Load environment variables from .env file
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    
+    JINA_API_KEY = os.getenv("JINA_API_KEY")
+
     QDRANT_URL = os.getenv("QDRANT_CLUSTER_ENDPOINT")
     QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
     QDRANT_COLLECTION = "enterprise_rag"  # Default collection name
@@ -14,7 +15,10 @@ class Settings:
     GROQ_FALLBACK_API_KEY = os.getenv("GROQ_FALLBACK_API_KEY")
     GROQ_MODEL = "gpt-4o"  # Default model for GROQ
 
-settings = Settings()  # did becuaue directly from environment variables, 
+    LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
+    LOGFIRE_BASE_URL = os.getenv("LOGFIRE_BASE_URL")
+
+settings = Settings()  # did becuaue directly from environment variables,
 #but now we are using a Settings class to encapsulate the configuration.
 
 # here config files is helping us to get env related variable and others also

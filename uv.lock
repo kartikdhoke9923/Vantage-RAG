@@ -24,7 +24,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "langsmith" },
-    { name = "logfire", extra = ["fastapi", "requests"] },
+    { name = "logfire", extra = ["fastapi", "requests", "system-metrics"] },
     { name = "loguru" },
     { name = "nemoguardrails" },
     { name = "nest-asyncio" },
@@ -70,7 +70,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.2.10" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.1" },
     { name = "langsmith", specifier = ">=0.10.15" },
-    { name = "logfire", extras = ["fastapi", "requests"], specifier = ">=4.39.0" },
+    { name = "logfire", extras = ["fastapi", "requests", "system-metrics"], specifier = ">=4.39.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "nemoguardrails", specifier = ">=0.23.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
@@ -2212,6 +2212,9 @@ fastapi = [
 requests = [
     { name = "opentelemetry-instrumentation-requests" },
 ]
+system-metrics = [
+    { name = "opentelemetry-instrumentation-system-metrics" },
+]
 
 [[package]]
 name = "loguru"
@@ -3205,6 +3208,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c8/84/f46bf7976a81827419b085c9ed14562410c7599e07509786e9f6eb3c5438/opentelemetry_instrumentation_requests-0.65b0.tar.gz", hash = "sha256:1d601548f89236d5ab373c7208a2e1e162a8d6462b5b972f9ad8fb0ed82d7438", size = 18107, upload-time = "2026-07-16T15:26:18.532Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/45/6201afe846263d775cd4fc8d6a87dc8c15eb7921cdade4dca1e1227b04b6/opentelemetry_instrumentation_requests-0.65b0-py3-none-any.whl", hash = "sha256:91688ec0d4d1fed75ea8d026ef2c66274ed9868c22b6be211ef85d832d16f957", size = 13386, upload-time = "2026-07-16T15:25:31.093Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-system-metrics"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "psutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/8f/d4be5113ec220a49e7c5c37b450cdc4008709500526a43e2c0d2826fe3f0/opentelemetry_instrumentation_system_metrics-0.65b0.tar.gz", hash = "sha256:c8b82821ccc95c5f2c516bb72356f75673ced51364eed583a14bf3b85fa6a0c7", size = 17414, upload-time = "2026-07-16T15:26:21.702Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/9e/90c142f60d91c80b725b5830cf02d1ab91344611e857427fec048695579f/opentelemetry_instrumentation_system_metrics-0.65b0-py3-none-any.whl", hash = "sha256:48ef6c8f5924f391d07c073a40c7018874046703477e538fbe64ff37af196cf0", size = 14005, upload-time = "2026-07-16T15:25:36.329Z" },
 ]
 
 [[package]]
