@@ -11,6 +11,7 @@ nest-asyncio                # Support for nested async loops in notebooks/stream
 # --- JINA API EMBEDDINGS + LOCAL FALLBACK ---
 sentence-transformers       # Local fallback embeddings (mxbai-embed-large-v1)
 torch                        # Required by sentence-transformers
+transformers<5              # Pin to 4.x — 5.x removed dependency_versions_check (breaks sentence-transformers)
 
 # --- VECTOR DB & RETRIEVAL ---
 qdrant-client               # Vector Database for semantic search
@@ -23,6 +24,7 @@ langchain-community         # Community-contributed tools and loaders
 langchain-openai            # OpenAI-compatible layer (used by Portkey gateway + guardrails)
 pydantic>=2.0.0             # Data validation and settings management
 pydantic-settings           # Pydantic BaseSettings with dotenv support
+
 
 # --- DATA INGESTION & DOCUMENT PARSING ---
 unstructured                # Base library for DOCX/PPTX partitioning
@@ -64,4 +66,7 @@ langfuse                    # Live production monitoring, tracing & user feedbac
 
 # --- EMBEDDINGS (SENTENCE TRANSFORMERS) ---
 sentence-transformers       # Local fallback embeddings (mxbai-embed-large-v1)
+transformers<5              # Pin to 4.x — 5.x removed dependency_versions_check (breaks sentence-transformers)
 langchain_google_genai
+
+flashrank
