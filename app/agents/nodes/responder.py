@@ -1,14 +1,53 @@
+import re
+
 import logfire
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
 from app.agents.state import AgentState
-from app.config import settings
 from app.gateway import extract_cache_status, portkey_client
+from app.services.prompts import render_prompt
+
+# Max characters of retrieved context passed to the LLM.
+MAX_CONTEXT_CHARS = 25000
+CITATION_RE = re.compile(r"\[(\d+)\]")
+
+
+def _build_numbered_context(documents: list[dict]) -> str:
+    """
+    Format retrieval chunks with citation markers so the LLM can cite them:
+
+        [1] (source: architecture.pptx) <content>
+        [2] (source: cronjobs.docx)     <content>
+    """
+    blocks = []
+    for index, doc in enumerate(documents, start=1):
+        source = doc.get("source", "unknown")
+        content = doc.get("content", "")
+        source_line = f"[{index}] (source: {source})"
+        blocks.append(f"{source_line}\n{content}")
+    return "\n\n".join(blocks)
+
+
+def _check_citations(content: str, max_index: int) -> str | None:
+    """
+    Citation guard: every [n] cited in the answer must refer to one of the
+    retrieved chunks ([1..max_index]). Returns a warning string, or None when
+    the answer only cites valid sources (or cites nothing).
+    """
+    cited = [int(n) for n in CITATION_RE.findall(content)]
+    invalid = [n for n in cited if n < 1 or n > max_index]
+    if invalid:
+        message = f"Citation guard: answer referenced sources {sorted(set(invalid))} outside the retrieved chunk range 1..{max_index}."
+        logfire.warning(message)
+        return message
+    return None
 
 
 def generate_node(state: AgentState):
     """
-    Synthesizes a response using both Documentation Context AND Conversation History.
+    Synthesizes a response using both Documentation Context AND Conversation
+    History, with enforced inline citations for retrieved chunks.
+
     Uses the native Portkey client (not LangChain) so we can read the
     x-portkey-cache-status response header and surface Cache: Hit in the UI.
     """
@@ -23,48 +62,43 @@ def generate_node(state: AgentState):
 
     if query == "CONVERSATIONAL":
         logfire.info("Generating conversational response using memory.")
-        prompt = f"""
-        You are a friendly and helpful Enterprise AI Assistant.
-        Answer the user's latest message using the CONVERSATION HISTORY below.
-
-        CONVERSATION HISTORY:
-        {history_str}
-
-        LATEST MESSAGE:
-        "{user_msg}"
-        """
+        prompt = render_prompt(
+            "responder_conversational",
+            history=history_str,
+            question=user_msg,
+        )
     else:
-        logfire.info("Generating technical RAG response.")
-        max_context_chars = 25000
-        full_context = ""
+        logfire.info("Generating technical RAG response with citations.")
+        documents = state.get("documents", [])
 
-        for doc in state["documents"]:
-            if len(full_context) + len(doc) < max_context_chars:
-                full_context += doc + "\n\n"
+        full_context = ""
+        for doc in documents:
+            if len(full_context) + len(doc.get("content", "")) < MAX_CONTEXT_CHARS:
+                full_context += doc.get("content", "") + "\n\n"
             else:
-                logfire.warning("Context truncated to fit Groq TPM limits.")
+                logfire.warning("Context truncated to fit TPM limits.")
                 break
 
-        prompt = f"""
-        You are a Senior Technical Architect.
-        Answer the question using the TECHNICAL CONTEXT provided.
-
-        TECHNICAL CONTEXT:
-        {full_context}
-
-        CONVERSATION HISTORY:
-        {history_str}
-
-        USER QUESTION:
-        "{user_msg}"
-        """
+        numbered_context = _build_numbered_context(documents)
+        prompt = render_prompt(
+            "responder_technical",
+            context=numbered_context,
+            history=history_str,
+            question=user_msg,
+            max_index=str(len(documents)),
+        )
 
     with logfire.span("✍️ LLM Synthesis"):
         try:
-            response = _generate_response(prompt)
+            response = _generate_response(prompt, slug=state.get("slug"), model=state.get("model"))
             content = response.choices[0].message.content
             cache_status = extract_cache_status(response)
             is_cache_hit = cache_status == "HIT"
+
+            # Citation guard: verify every cited source is a real retrieved chunk.
+            citation_warning = None
+            if query != "CONVERSATIONAL":
+                citation_warning = _check_citations(content, len(state.get("documents", [])))
 
             if is_cache_hit:
                 logfire.info("⚡ Gateway Cache Hit — response served from Portkey cache.")
@@ -75,16 +109,20 @@ def generate_node(state: AgentState):
                 plan_update = state["plan"]
                 status = "Response generated."
 
+            if citation_warning:
+                plan_update = plan_update + ["⚠️ " + citation_warning]
+
             return {
                 "final_answer": content,
                 "status": status,
                 "plan": plan_update,
+                "citation_warning": citation_warning,
                 "messages": [{"role": "assistant", "content": content}],
             }
 
         except Exception as e:
             logfire.error(f"LLM Generation failed after retries: {e}")
-            raise e
+            raise
 
 
 @retry(
@@ -93,9 +131,11 @@ def generate_node(state: AgentState):
     reraise=True,
     before_sleep=before_sleep_log(logfire, "warning"),
 )
-def _generate_response(prompt: str):
+def _generate_response(prompt: str, slug: str | None = None, model: str | None = None):
     """Call the LLM gateway with retry logic for transient failures."""
+    from app.gateway import gateway_model
+
     return portkey_client.chat.completions.create(
-        model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
+        model=gateway_model(slug, model),
         messages=[{"role": "user", "content": prompt}],
     )

@@ -1,14 +1,30 @@
 import os
-import streamlit as st
-import requests
 import time
 import uuid
+
 import logfire
+import requests
+import streamlit as st
+from dotenv import load_dotenv
+
+# Load environment variables explicitly from the repository root so the UI
+# works with a plain `streamlit run` call (not just `uv run`, which loads .env).
+env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(dotenv_path=env_path)
+
+
+def _get_secret(name: str, default: str) -> str:
+    """Read a Streamlit secret, falling back to the default when no
+    secrets.toml exists (st.secrets.get raises instead of returning its default)."""
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
 
 
 # Initialize Logfire
 try:
-    logfire.configure(token=st.secrets.get("LOGFIRE_TOKEN", os.getenv("LOGFIRE_TOKEN")))
+    logfire.configure(token=_get_secret("LOGFIRE_TOKEN", os.getenv("LOGFIRE_TOKEN", "")))
     logfire.instrument_requests()   # propagates trace context to the FastAPI backend
     LOGFIRE_STATUS = "Connected & Tracing"
 except Exception:
@@ -43,7 +59,16 @@ with st.sidebar:
     st.markdown("---")
     st.success(f"Logfire: {LOGFIRE_STATUS}")
     st.info(f"Memory ID: {st.session_state.session_id[:8]}")
-    
+
+    # --- Gateway (Portkey) switcher ---
+    # Lets you fall back to a different provider slug/model per conversation.
+    st.markdown("### 🔌 Gateway (Portkey)")
+    default_slug = _get_secret("PORTKEY_PRIMARY_SLUG", os.getenv("PORTKEY_PRIMARY_SLUG", "groq"))
+    default_model = _get_secret("PORTKEY_PRIMARY_MODEL", os.getenv("PORTKEY_PRIMARY_MODEL", "openai/gpt-oss-20b"))
+    gateway_slug = st.text_input("Provider slug", value=default_slug, key="gateway_slug")
+    gateway_model = st.text_input("Model", value=default_model, key="gateway_model")
+    st.caption(f"Routing as `@{gateway_slug}/{gateway_model}`")
+
     if st.button("🗑️ Clear History & Memory", width="stretch", type="primary"):
         logfire.warning(f"🗑️ Memory Wipe Triggered for session: {st.session_state.session_id}")
         st.session_state.messages = []
@@ -75,7 +100,12 @@ if prompt := st.chat_input("Ask about your documentation..."):
                 try:
                     with logfire.span("📡 Calling RAG Backend"):
                         url = f"{base_url}/query"
-                        payload = {"q": prompt, "thread_id": st.session_state.session_id}
+                        payload = {
+                            "q": prompt,
+                            "thread_id": st.session_state.session_id,
+                            "slug": st.session_state.get("gateway_slug", "groq"),
+                            "model": st.session_state.get("gateway_model", "openai/gpt-oss-20b"),
+                        }
                         response = requests.post(url, json=payload, timeout=60)
 
                         if response.status_code != 200:
@@ -112,8 +142,10 @@ if prompt := st.chat_input("Ask about your documentation..."):
             if sources:
                 with st.expander(f"📄 Retrieved Context ({len(sources)} chunks)"):
                     for i, source in enumerate(sources):
-                        st.caption(f"Chunk {i + 1}")
-                        st.info(source)
+                        content = source.get("content", "") if isinstance(source, dict) else str(source)
+                        src = source.get("source", "unknown") if isinstance(source, dict) else "unknown"
+                        st.caption(f"Chunk {i + 1} [{src}]")
+                        st.info(content)
             else:
                 st.caption("ℹ️ No context retrieved — conversational response.")
 

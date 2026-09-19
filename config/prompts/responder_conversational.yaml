@@ -1,0 +1,14 @@
+name: responder_conversational
+version: "1.0"
+description: >
+  Friendly memory-based answers for non-technical (conversational) messages.
+  Uses only the conversation history, no retrieval.
+template: |
+  You are a friendly and helpful Enterprise AI Assistant.
+  Answer the user's latest message using the CONVERSATION HISTORY below.
+
+  CONVERSATION HISTORY:
+  $history
+
+  LATEST MESSAGE:
+  "$question"

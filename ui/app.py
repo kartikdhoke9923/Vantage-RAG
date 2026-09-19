@@ -40,7 +40,6 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide",
 )
-
 # --- AVATARS ---
 AI_AVATAR = "🤖"
 USER_AVATAR = "👤"
@@ -61,6 +60,15 @@ with st.sidebar:
     st.markdown("---")
     st.success(f"Logfire: {LOGFIRE_STATUS}")
     st.info(f"Memory ID: {st.session_state.session_id[:8]}")
+
+    # --- Gateway (Portkey) switcher ---
+    # Lets you fall back to a different provider slug/model per conversation.
+    st.markdown("### 🔌 Gateway (Portkey)")
+    default_slug = os.getenv("PORTKEY_PRIMARY_SLUG", "groq")
+    default_model = os.getenv("PORTKEY_PRIMARY_MODEL", "openai/gpt-oss-20b")
+    gateway_slug = st.text_input("Provider slug", value=default_slug, key="gateway_slug")
+    gateway_model = st.text_input("Model", value=default_model, key="gateway_model")
+    st.caption(f"Routing as `@{gateway_slug}/{gateway_model}`")
 
     if st.button("🗑️ Clear History & Memory", width="stretch", type="primary"):
         logfire.warn(f"🗑️ Memory Wipe Triggered for session: {st.session_state.session_id}")
@@ -94,7 +102,12 @@ if prompt := st.chat_input("Ask about your documentation..."):
                     with logfire.span("📡 Calling RAG Backend"):
                         base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
                         url = f"{base_url}/query"
-                        payload = {"q": prompt, "thread_id": st.session_state.session_id}
+                        payload = {
+                        "q": prompt,
+                        "thread_id": st.session_state.session_id,
+                        "slug": st.session_state.get("gateway_slug", "groq"),
+                        "model": st.session_state.get("gateway_model", "openai/gpt-oss-20b"),
+                    }
                         headers = {
                             "Content-Type": "application/json",
                             "Authorization": f"Bearer {os.getenv('RAG_API_KEY', '')}",
@@ -150,9 +163,11 @@ if prompt := st.chat_input("Ask about your documentation..."):
                     if sources:
                         with st.expander("📄 View Retrieved Context (Sources)"):
                             for i, source in enumerate(sources):
-                                preview = source[:100].replace("\n", " ") + "..."
-                                with st.expander(f"Chunk {i + 1}: {preview}"):
-                                    st.info(source)
+                                content = source.get("content", "") if isinstance(source, dict) else str(source)
+                                src = source.get("source", "unknown") if isinstance(source, dict) else "unknown"
+                                preview = content[:80].replace("\n", " ") + "..."
+                                with st.expander(f"Chunk {i + 1} [{src}]: {preview}"):
+                                    st.info(content)
                 except Exception as e:
                     logfire.error(f"❌ UI-Backend Connection Failed: {e}")
                     status.update(label="❌ Connection Failed", state="error")

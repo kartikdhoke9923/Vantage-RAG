@@ -17,11 +17,18 @@ logfire.configure(
     advanced=logfire.AdvancedOptions(base_url=_logfire_base_url) if _logfire_base_url else None,
 )
 
+# Capture Jina/Portkey/OpenAI HTTP traffic as structured spans in Logfire.
+# instrument_openai tracks the OpenAI-SDK calls that are routed through the
+# Portkey gateway (responder, planner); instrument_requests tracks Jina
+# embedding/reranking calls made via the requests library.
+logfire.instrument_requests()
+logfire.instrument_openai()
+
 # Now safe to import app modules - logfire is already active
 import time
+import traceback
 import uuid
 from typing import Optional
-
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -41,10 +48,12 @@ RAG_REQUESTS_TOTAL = Counter(
     "Total number of /query requests",
     ["status"],
 )
+
 RAG_REQUEST_DURATION = Histogram(
     "rag_request_duration_seconds",
     "Latency of /query requests in seconds",
 )
+
 GUARDRAILS_BLOCKS_TOTAL = Counter(
     "guardrails_blocks_total",
     "Number of requests blocked or allowed by guardrails",
@@ -54,7 +63,7 @@ GUARDRAILS_BLOCKS_TOTAL = Counter(
 _security = HTTPBearer(auto_error=False)
 
 
-def _init_rate_limiter():
+def _init_rate_limiter(redis_healthy: bool):
     """Initialize rate limiting. Use Redis in production; fall back to in-memory storage locally."""
     from limits.storage import RedisStorage
     from slowapi import Limiter
@@ -62,19 +71,25 @@ def _init_rate_limiter():
     from slowapi.extension import _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
 
-    try:
-        storage = RedisStorage(settings.redis_url)
-        # `storage.check()` returns False silently on some failures; ping the
-        # underlying Redis client so we only use Redis when it is really reachable.
-        if not storage.check() or not storage.storage.ping():
-            raise ConnectionError("Redis did not respond to ping")
-        app.state.limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
-        app.state.rate_limiter_storage = "redis"
-        logfire.info("🚦 Rate limiting initialized via Redis.")
-    except Exception as e:
+    if not redis_healthy:
+        # Reuse the startup probe from check_all_connections — no second ping.
         app.state.limiter = Limiter(key_func=get_remote_address)
         app.state.rate_limiter_storage = "memory"
-        logfire.warning(f"⚠️ Redis unavailable ({e}); using in-memory rate limiting.")
+        logfire.info("🚦 Rate limiting: Redis unreachable — using in-memory storage.")
+    else:
+        try:
+            storage = RedisStorage(settings.redis_url)
+            storage.storage.socket_connect_timeout = 2
+            storage.storage.socket_timeout = 2
+            if not storage.check() or not storage.storage.ping():
+                raise ConnectionError("Redis did not respond to ping")
+            app.state.limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
+            app.state.rate_limiter_storage = "redis"
+            logfire.info("🚦 Rate limiting initialized via Redis.")
+        except Exception as e:
+            app.state.limiter = Limiter(key_func=get_remote_address)
+            app.state.rate_limiter_storage = "memory"
+            logfire.warning(f"⚠️ Redis probed OK but rate limiter setup failed ({e}); using in-memory storage.")
 
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     return True
@@ -97,6 +112,7 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(_security
             headers={"WWW-Authenticate": "Bearer"},
         )
     return credentials.credentials
+
 
 
 def _get_limiter_rule(times: int, seconds: int) -> str:
@@ -165,13 +181,17 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_sch
 def startup_event():
     initialize_rails()
 
+    # Verify all external dependencies are reachable (single probe pass; the
+    # cached Redis result is reused by the rate limiter below).
+    connection_results = check_all_connections()
+
     # Build the agent graph with the production checkpointer (Postgres by default).
     app.state.rag_agent = build_graph()
 
-    app.state.rate_limiter_enabled = _init_rate_limiter()
+    app.state.rate_limiter_enabled = _init_rate_limiter(
+        redis_healthy=connection_results["redis"].healthy
+    )
 
-    # Verify all external dependencies are reachable.
-    connection_results = check_all_connections()
     all_healthy = log_connection_summary(connection_results)
     if settings.STRICT_STARTUP and not all_healthy:
         failed = [name for name, r in connection_results.items() if not r.healthy]
@@ -184,6 +204,10 @@ def startup_event():
 class QueryRequest(BaseModel):
     q: str
     thread_id: Optional[str] = "default_user"
+    # Per-request Portkey gateway overrides from the UI (fall back to a
+    # different provider slug/model). Empty/None → settings defaults.
+    slug: Optional[str] = None
+    model: Optional[str] = None
 
 
 @app.get("/")
@@ -222,7 +246,26 @@ def query(
     start = time.perf_counter()
     with logfire.span("🔍 /query", request_id=request_id, thread_id=thread_id):
         # Gate: run guardrails synchronously so blocked requests never run the graph.
-        rail_fired, rail_response = guard(q)
+        # Provider errors at query time must NOT bubble into a bare 500 → fail
+        # open (dev) or fail closed (GUARDRAILS_FAIL_OPEN=false) instead.
+        try:
+            rail_fired, rail_response = guard(q)
+        except Exception as e:
+            logfire.error(f"🛡️ Guardrails error: {e}", request_id=request_id, thread_id=thread_id)
+            if settings.GUARDRAILS_FAIL_OPEN:
+                rail_fired, rail_response = False, None
+                logfire.warning("🛡️ Fail-open: proceeding to RAG without gate.")
+            else:
+                RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
+                RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "request_id": request_id,
+                        "status": "error",
+                        "message": "Guardrails unavailable. Please try again later.",
+                    },
+                )
         if rail_fired:
             GUARDRAILS_BLOCKS_TOTAL.labels(blocked="true").inc()
             RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
@@ -246,6 +289,8 @@ def query(
                 "documents": [],
                 "plan": ["Start"],
                 "status": "Initializing Graph...",
+                "slug": body.slug,
+                "model": body.model,
             }
             config = {"configurable": {"thread_id": thread_id}}
             final_output = rag_agent.invoke(initial_state, config=config)
@@ -267,8 +312,10 @@ def query(
         except Exception as e:
             RAG_REQUESTS_TOTAL.labels(status="error").inc()
             RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+            tb = traceback.format_exc()
+            print(f"❌ RAG pipeline failed: {e}\n{tb}", flush=True)
             logfire.error(
-                f"❌ RAG pipeline failed: {e}",
+                f"❌ RAG pipeline failed: {e}\n{tb}",
                 request_id=request_id,
                 thread_id=thread_id,
             )
@@ -277,6 +324,6 @@ def query(
                 content={
                     "request_id": request_id,
                     "status": "error",
-                    "message": "Failed to process request. Please try again later.",
+                    "message": f"Failed to process request: {e}",
                 },
             )
