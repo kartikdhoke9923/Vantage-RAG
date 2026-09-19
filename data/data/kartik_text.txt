@@ -1,0 +1,194 @@
+
+
+Kartik/ KRD
+
+    00.Home
+    01.About
+    02.Projects
+    03.Experience
+    04.Contact
+
+[ Available for Opportunities ]
+Kartik R. DhokeData Engineer & Data Scientist
+
+I turn raw data into decisions — pipelines that scale, models that ship, dashboards that answer the actual question.
+Review Technical Portfolio
+initiate_contact()
+Metrics // Output
+
+    94%Model Accuracy Index
+    1M+Rows Processed / Pipeline
+    08Dashboards Shipped
+
+// Coord_Ref   18.5204°N · 73.8567°E
+// Sys_Status   ACTIVE
+// Compound    (1.01)^365 ≈ 37.78
+Scroll for systems depth
+01 // about
+Data systems, end to end.
+
+Engineering discipline applied to messy, real-world data — from ingestion to a number a stakeholder can act on.
+
+I work across the full data stack — building pipelines that move data reliably, models that actually get deployed, and dashboards that help people make better decisions.
+
+I came from electrical engineering, which taught me to think in systems. That same mindset is what I bring to data — structure, reliability, and outcomes that matter.
+
+Every project I build ends with a report — findings, business recommendations, and what to improve next. Data without a decision is just storage.
+
+"Comfort zone: SQL that explains itself, pipelines that fail loudly, and dashboards that answer the actual question.
+MathStatistics, linear algebra, and signal processing
+SystemsPipelines that break loudly, not quietly
+ModelsBuilt to be validated, monitored, and shipped
+ReportingEvery project ends with findings and a clear next step
+AnalysisClean data, honest logic, decisions that actually land
+MindsetElectrical engineer by training, data professional by choice
+Stack // Index
+
+    01Python
+    Language
+    02SQL
+    Language
+    03Pandas · NumPy
+    Data
+    04Scikit-learn · LightGBM
+    ML
+    05VADER · NLP
+    NLP
+    06Statistics
+    Stats
+    07MySQL · PostgreSQL
+    DB
+    08FastAPI · Streamlit
+    Framework
+    09Power BI · Tableau
+    BI
+    10AWS EC2
+    Cloud
+    11Matplotlib · Seaborn
+    Viz
+
+02 // case studies
+Selected work.
+
+Projects I built end to end — from raw data to a result someone can use.
+Filter //
+[All]
+Machine Learning
+Dashboard
+Analytics
+CASE_01
+Machine Learning
+IEEE-CIS Fraud Detection
+IEEE-CIS Fraud Detection
+
+Real-time fraud scoring on the IEEE-CIS dataset. LightGBM behind a REST API with a Streamlit cockpit for analysts.
+
+Arch
+    LightGBM · FastAPI · Streamlit
+Scale
+    590K transactions
+Deploy
+    Streamlit Cloud
+
+LightGBMPythonFastAPIStreamlit
+Source
+Live
+CASE_02
+Machine Learning
+Stock Market Forecasting & Decision Support System
+Stock Market Forecasting & Decision Support System
+
+A 3-phase production platform — not a simple predictor. Combines technical analysis, NLP news sentiment, probabilistic forecasting, backtesting, portfolio optimization, and a regime-aware decision engine that outputs BUY/HOLD/SELL with entry zone, stop loss, and take profit levels.
+
+Arch
+    FastAPI · GMM · GARCH · ARIMA
+Scale
+    3 phases, 6 strategies
+Deploy
+    AWS EC2 + Streamlit
+
+    Phase 1: RSI, MACD, Bollinger Bands, OBV, earnings analysis, news sentiment (VADER).
+    Phase 2: 6-strategy backtester with Sharpe/Sortino/MaxDD + portfolio optimizer (efficient frontier).
+    Phase 3: Regime detection (GaussianMixture), EWMA-GARCH + ARIMA Monte Carlo forecast, global macro sentiment from Reuters/BBC/AP/CNBC.
+
+FastAPIPythonScikit-learnVADERGARCHARIMAStreamlitAWS EC2yfinancePlotly
+Source
+Live
+CASE_03
+Dashboard · Analytics
+LA Crime Intelligence Dashboard
+LA Crime Intelligence Dashboard
+
+End-to-end analytics on 1M+ LAPD crime records (2020–2026). Full pipeline from raw data cleaning in Python → structured querying in MySQL → 5-page interactive Power BI dashboard with Azure Maps crime hotspot visualization and DAX-driven KPIs.
+
+Arch
+    Python → MySQL → Power BI
+Scale
+    1M+ records
+Deploy
+    Power BI Service
+
+    EDA and data cleaning on 1M+ records in Python.
+    SQL queries for filtering, aggregation, and pattern extraction across crime categories.
+    Power BI dashboard: 5 pages, drilldowns, dynamic filters by area, time, and crime type.
+    Key finding: Central district 69,670+ crimes; peak window 6–10 PM; 9% arrest rate.
+
+PythonMySQLPower BIDAXAzure MapsPandasJupyter
+Source
+Open full archive[6]
+03 // trajectory
+A condensed log.
+
+Where I've shipped, studied, and broken things — in order of recency.
+
+    2025 — Present
+    [ENTRY_01]
+    Data Engineer & Data Scientist
+    Independent / Consulting
+        End-to-end ETL pipelines on Python + SQL for retail and fintech clients.
+        Fraud detection and forecasting models shipped behind FastAPI on AWS EC2.
+        BI layers in Power BI cutting reporting cycles by 80%.
+        Stock Market Predictor: ML + NLP + live news sentiment for probability-based market analysis.
+        Smart Energy Meter: real-time usage analytics and anomaly detection.
+    2025 Jun — 2026 Feb
+    [ENTRY_02]
+    Data Science, Analytics & AI
+    IT Vedant · Certification Program
+        Applied Machine Learning, NLP, and data pipeline engineering.
+        Hands-on projects in predictive modeling and analytics.
+        Bridged electrical engineering domain knowledge into data systems.
+    2022 — 2025
+    [ENTRY_03]
+    B.Tech, Electrical Engineering
+    University
+        Mathematics, signal processing, control systems.
+        Capstone: Smart Energy Meter with real-time analytics and anomaly detection.
+
+04 // connect
+Let's connect.
+
+See the live resume, follow the work, or send a note about a role, collaboration, or technical problem worth solving.
+Links // Direct
+Live resume
+Read the current brief
+
+    01.
+    Email
+    kartikdhoke9923@gmail.com
+    02.
+    GitHub
+    @kartikdhoke9923
+    03.
+    LinkedIn
+    Connect with me
+
+// Response_SLA   < 24h
+// Timezone      IST (UTC+5:30)
+[01] Your name
+[02] Your email
+[03] Your note
+Send a note
+Kartik R. Dhoke
+// Data Engineer · Data Scientist
+© 2026 — built by hand
+data > opinions

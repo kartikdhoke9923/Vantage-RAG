@@ -15,10 +15,17 @@ def create_checkpointer() -> BaseCheckpointSaver:
     Create a durable Postgres checkpointer for production.
     Falls back to in-memory MemorySaver only if Postgres is unreachable.
 
+    If POSTGRES_URI is empty (local/dev), skip Postgres entirely and go
+    straight to MemorySaver — no connection attempt, no startup delay.
+
     Note: we run setup() through a single autocommit connection because
     LangGraph's migrations include CREATE INDEX CONCURRENTLY, which Neon
     rejects when run inside a transaction (the default ConnectionPool mode).
     """
+    if not settings.postgres_uri:
+        logfire.info("🚦 POSTGRES_URI not set — using in-memory MemorySaver checkpointer.")
+        return MemorySaver()
+
     try:
         from langgraph.checkpoint.postgres import PostgresSaver
         from psycopg_pool import ConnectionPool
@@ -27,6 +34,8 @@ def create_checkpointer() -> BaseCheckpointSaver:
             conninfo=settings.postgres_uri,
             max_size=20,
             open=False,
+            # Generous enough for Neon serverless cold starts (first connect can
+            # take several seconds) without hanging boot for ages.
             timeout=10,
             num_workers=3,
             check=ConnectionPool.check_connection,

@@ -1,6 +1,11 @@
 import logfire
 import requests
-from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from app.config import settings
 
@@ -84,8 +89,8 @@ def get_embedding_dim() -> int:
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=5),
+    stop=stop_after_attempt(5),
+    wait=wait_random_exponential(multiplier=1, min=2, max=30),
     reraise=True,
     before_sleep=before_sleep_log(logfire, "warning"),
 )

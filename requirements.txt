@@ -14,7 +14,8 @@ torch                        # Required by sentence-transformers
 transformers<5              # Pin to 4.x — 5.x removed dependency_versions_check (breaks sentence-transformers)
 
 # --- VECTOR DB & RETRIEVAL ---
-qdrant-client               # Vector Database for semantic search
+chromadb                    # Vector database for semantic + metadata search
+rank-bm25                   # In-memory BM25 lexical search for hybrid retrieval
 
 # --- LANGCHAIN & AGENTIC ORCHESTRATION ---
 langchain                   # Core LLM orchestration

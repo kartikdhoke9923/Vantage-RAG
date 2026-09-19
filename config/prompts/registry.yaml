@@ -1,0 +1,17 @@
+# Registry of versioned prompts.
+# Each entry lives in its own <name>.yaml with a `version` field.
+# defaults.active_versions selects which version is used; the PROMPT_VERSION
+# environment variable (name@version or a bare version) overrides it at runtime.
+version: "1"
+defaults:
+  active_versions:
+    planner: "1.0"
+    responder_technical: "1.0"
+    responder_conversational: "1.0"
+prompts:
+  planner:
+    file: planner.yaml
+  responder_technical:
+    file: responder_technical.yaml
+  responder_conversational:
+    file: responder_conversational.yaml
