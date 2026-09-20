@@ -25,12 +25,13 @@ logfire.instrument_requests()
 logfire.instrument_openai()
 
 # Now safe to import app modules - logfire is already active
+import json
 import time
 import traceback
 import uuid
 from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from prometheus_client import Counter, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -65,6 +66,10 @@ _security = HTTPBearer(auto_error=False)
 
 def _init_rate_limiter(redis_healthy: bool):
     """Initialize rate limiting. Use Redis in production; fall back to in-memory storage locally."""
+    if not settings.RATE_LIMIT_ENABLED:
+        logfire.info("Rate limiting disabled (RATE_LIMIT_ENABLED=false) — /query is unthrottled.")
+        return False
+
     from limits.storage import RedisStorage
     from slowapi import Limiter
     from slowapi.errors import RateLimitExceeded
@@ -170,7 +175,7 @@ def rate_limit(times: int = None, seconds: int = None):
 
 
 # Initialize FastAPI
-app = FastAPI(title="Enterprise Agentic RAG API")
+app = FastAPI(title="Vantage RAG API")
 app.include_router(health_router)
 
 # Expose Prometheus metrics at /metrics with default request instrumentation.
@@ -212,7 +217,7 @@ class QueryRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"message": "Enterprise LangGraph RAG API is live."}
+    return {"message": "Vantage RAG API is live."}
 
 
 @app.get("/graph")
@@ -225,6 +230,85 @@ def get_graph_image(_api_key: str = Depends(verify_api_key)):
         return Response(content=png_bytes, media_type="image/png")
     except Exception as e:
         return {"error": f"Could not generate graph image: {e}"}
+
+
+def _run_gate(
+    q: str,
+    request_id: str,
+    thread_id: str,
+    start: float,
+) -> tuple[str, dict | None]:
+    """
+    Run the guardrails gate. Returns (decision, payload):
+      ("allow", None)            → proceed to the graph
+      ("blocked", dict)          → block response to return to the user
+      ("unavailable", dict)      → 503 JSON (fail-closed)
+    """
+    try:
+        rail_fired, rail_response = guard(q)
+    except Exception as e:
+        logfire.error(f"🛡️ Guardrails error: {e}", request_id=request_id, thread_id=thread_id)
+        if settings.GUARDRAILS_FAIL_OPEN:
+            rail_fired, rail_response = False, None
+            logfire.warning("🛡️ Fail-open: proceeding to RAG without gate.")
+        else:
+            RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
+            RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+            return (
+                "unavailable",
+                JSONResponse(
+                    status_code=503,
+                    content={
+                        "request_id": request_id,
+                        "status": "error",
+                        "message": "Guardrails unavailable. Please try again later.",
+                    },
+                ),
+            )
+    if rail_fired:
+        GUARDRAILS_BLOCKS_TOTAL.labels(blocked="true").inc()
+        RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
+        RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+        logfire.info("🛡️ Request blocked by guardrails", request_id=request_id, thread_id=thread_id)
+        return (
+            "blocked",
+            {
+                "question": q,
+                "answer": rail_response,
+                "thought_process": ["Intent: Guardrails Fired", "Retrieval: Skipped"],
+                "status": "Blocked by guardrails.",
+                "sources": [],
+            },
+        )
+
+    GUARDRAILS_BLOCKS_TOTAL.labels(blocked="false").inc()
+    return "allow", None
+
+
+def _build_initial_state(q: str, thread_id: str, body) -> dict:
+    """Shared initial LangGraph state for the query endpoints."""
+    return {
+        "messages": [{"role": "user", "content": q}],
+        "current_query": q,
+        "documents": [],
+        "plan": ["Start"],
+        "status": "Initializing Graph...",
+        "slug": body.slug,
+        "model": body.model,
+    }
+
+
+def _response_from_state(q: str, final_output: dict) -> dict:
+    """Shape a full /query response from a finalized graph state."""
+    return {
+        "question": q,
+        "answer": final_output.get("final_answer"),
+        "thought_process": final_output.get("plan"),
+        "status": final_output.get("status"),
+        "sources": final_output.get("documents", []),
+        "fact_check": final_output.get("fact_check"),
+        "citation_warning": final_output.get("citation_warning"),
+    }
 
 
 @app.post("/query")
@@ -246,52 +330,13 @@ def query(
     start = time.perf_counter()
     with logfire.span("🔍 /query", request_id=request_id, thread_id=thread_id):
         # Gate: run guardrails synchronously so blocked requests never run the graph.
-        # Provider errors at query time must NOT bubble into a bare 500 → fail
-        # open (dev) or fail closed (GUARDRAILS_FAIL_OPEN=false) instead.
-        try:
-            rail_fired, rail_response = guard(q)
-        except Exception as e:
-            logfire.error(f"🛡️ Guardrails error: {e}", request_id=request_id, thread_id=thread_id)
-            if settings.GUARDRAILS_FAIL_OPEN:
-                rail_fired, rail_response = False, None
-                logfire.warning("🛡️ Fail-open: proceeding to RAG without gate.")
-            else:
-                RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
-                RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "request_id": request_id,
-                        "status": "error",
-                        "message": "Guardrails unavailable. Please try again later.",
-                    },
-                )
-        if rail_fired:
-            GUARDRAILS_BLOCKS_TOTAL.labels(blocked="true").inc()
-            RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
-            RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
-            logfire.info("🛡️ Request blocked by guardrails", request_id=request_id, thread_id=thread_id)
-            return {
-                "question": q,
-                "answer": rail_response,
-                "thought_process": ["Intent: Guardrails Fired", "Retrieval: Skipped"],
-                "status": "Blocked by guardrails.",
-                "sources": [],
-            }
-
-        GUARDRAILS_BLOCKS_TOTAL.labels(blocked="false").inc()
+        decision, payload = _run_gate(q, request_id, thread_id, start)
+        if decision != "allow":
+            return payload
 
         try:
             rag_agent = app.state.rag_agent
-            initial_state = {
-                "messages": [{"role": "user", "content": q}],
-                "current_query": q,
-                "documents": [],
-                "plan": ["Start"],
-                "status": "Initializing Graph...",
-                "slug": body.slug,
-                "model": body.model,
-            }
+            initial_state = _build_initial_state(q, thread_id, body)
             config = {"configurable": {"thread_id": thread_id}}
             final_output = rag_agent.invoke(initial_state, config=config)
 
@@ -302,13 +347,7 @@ def query(
                 request_id=request_id,
                 thread_id=thread_id,
             )
-            return {
-                "question": q,
-                "answer": final_output.get("final_answer"),
-                "thought_process": final_output.get("plan"),
-                "status": final_output.get("status"),
-                "sources": final_output.get("documents", []),
-            }
+            return _response_from_state(q, final_output)
         except Exception as e:
             RAG_REQUESTS_TOTAL.labels(status="error").inc()
             RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
@@ -327,3 +366,93 @@ def query(
                     "message": f"Failed to process request: {e}",
                 },
             )
+
+
+@app.post("/query/stream")
+@rate_limit()
+def query_stream(
+    request: Request,
+    body: QueryRequest,
+    _api_key: str = Depends(verify_api_key),
+):
+    """
+    Runs the LangGraph RAG pipeline as a Server-Sent-Events stream.
+
+    Emits one SSE event per node visit, then a final 'done' event with the
+    complete answer. Event shape: {"type": "start"|"node"|"done"|"error", ...}.
+    """
+    q = body.q
+    thread_id = body.thread_id
+    request_id = str(uuid.uuid4())
+    set_request_id(request_id)
+
+    start = time.perf_counter()
+    with logfire.span("🔍 /query/stream", request_id=request_id, thread_id=thread_id):
+        decision, payload = _run_gate(q, request_id, thread_id, start)
+        if decision != "allow":
+            return payload
+
+        rag_agent = app.state.rag_agent
+
+        def sse(data: dict) -> str:
+            return f"data: {json.dumps(data, default=str)}\n\n"
+
+        def event_stream():
+            try:
+                yield sse({"type": "start", "question": q})
+                initial_state = _build_initial_state(q, thread_id, body)
+                config = {"configurable": {"thread_id": thread_id}}
+
+                for chunk in rag_agent.stream(initial_state, config, stream_mode="updates"):
+                    for node_name, update in chunk.items():
+                        yield sse(
+                            {
+                                "type": "node",
+                                "node": node_name,
+                                "status": update.get("status"),
+                                "plan": update.get("plan"),
+                                "fact_check": update.get("fact_check"),
+                                "intent": update.get("intent"),
+                            }
+                        )
+
+                final_state = rag_agent.get_state(config).values if hasattr(rag_agent, "get_state") else {}
+                RAG_REQUESTS_TOTAL.labels(status="success").inc()
+                RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+                logfire.info(
+                    "✅ RAG pipeline streamed",
+                    request_id=request_id,
+                    thread_id=thread_id,
+                )
+                yield sse(
+                    {
+                        "type": "done",
+                        "answer": final_state.get("final_answer"),
+                        "sources": final_state.get("documents", []),
+                        "thought_process": final_state.get("plan"),
+                        "status": final_state.get("status"),
+                        "fact_check": final_state.get("fact_check"),
+                        "citation_warning": final_state.get("citation_warning"),
+                    }
+                )
+            except Exception as e:
+                RAG_REQUESTS_TOTAL.labels(status="error").inc()
+                RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
+                tb = traceback.format_exc()
+                print(f"❌ RAG stream failed: {e}\n{tb}", flush=True)
+                logfire.error(
+                    f"❌ RAG stream failed: {e}\n{tb}",
+                    request_id=request_id,
+                    thread_id=thread_id,
+                )
+                yield sse({"type": "error", "message": f"Failed to process request: {e}"})
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )

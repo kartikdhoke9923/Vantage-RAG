@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import uuid
@@ -32,7 +33,7 @@ except Exception:
 
 # --- PAGE CONFIG ---
 st.set_page_config(
-    page_title="Enterprise Agentic RAG",
+    page_title="Vantage RAG",
     page_icon="🤖",
     layout="wide",
 )
@@ -63,11 +64,18 @@ with st.sidebar:
     # --- Gateway (Portkey) switcher ---
     # Lets you fall back to a different provider slug/model per conversation.
     st.markdown("### 🔌 Gateway (Portkey)")
-    default_slug = _get_secret("PORTKEY_PRIMARY_SLUG", os.getenv("PORTKEY_PRIMARY_SLUG", "groq"))
-    default_model = _get_secret("PORTKEY_PRIMARY_MODEL", os.getenv("PORTKEY_PRIMARY_MODEL", "openai/gpt-oss-20b"))
+    default_slug = _get_secret("PORTKEY_PRIMARY_SLUG", os.getenv("PORTKEY_PRIMARY_SLUG", "gemini"))
+    default_model = _get_secret("PORTKEY_PRIMARY_MODEL", os.getenv("PORTKEY_PRIMARY_MODEL", "gemini-3.6-flash"))
     gateway_slug = st.text_input("Provider slug", value=default_slug, key="gateway_slug")
     gateway_model = st.text_input("Model", value=default_model, key="gateway_model")
     st.caption(f"Routing as `@{gateway_slug}/{gateway_model}`")
+
+    via_stream = st.toggle(
+        "☄️ Live pipeline streaming",
+        value=False,
+        key="via_stream",
+        help="POST /query/stream (SSE) and render each agent node as it runs.",
+    )
 
     if st.button("🗑️ Clear History & Memory", width="stretch", type="primary"):
         logfire.warning(f"🗑️ Memory Wipe Triggered for session: {st.session_state.session_id}")
@@ -76,7 +84,7 @@ with st.sidebar:
         st.rerun()
 
 # --- MAIN CHAT ---
-st.title("🤖 Enterprise Agentic Assistant")
+st.title("🤖 Kartik's RAG Chatbot")
 
 # Display history
 for message in st.session_state.messages:
@@ -103,22 +111,53 @@ if prompt := st.chat_input("Ask about your documentation..."):
                         payload = {
                             "q": prompt,
                             "thread_id": st.session_state.session_id,
-                            "slug": st.session_state.get("gateway_slug", "groq"),
-                            "model": st.session_state.get("gateway_model", "openai/gpt-oss-20b"),
+                            "slug": st.session_state.get("gateway_slug", "gemini"),
+                            "model": st.session_state.get("gateway_model", "gemini-3.6-flash"),
                         }
-                        response = requests.post(url, json=payload, timeout=60)
 
-                        if response.status_code != 200:
-                            st.error(f"Backend Error: {response.status_code} - {response.text}")
-                            st.stop()
+                        if st.session_state.get("via_stream", False):
+                            # Real-time SSE streaming of the agent pipeline.
+                            url = f"{base_url}/query/stream"
+                            steps_rendered = set()
+                            with requests.post(url, json=payload, stream=True, timeout=180) as resp:
+                                if resp.status_code != 200:
+                                    st.error(f"Backend Error: {resp.status_code} - {resp.text}")
+                                    st.stop()
+                                content_type = resp.headers.get("content-type", "")
+                                if content_type.startswith("application/json"):
+                                    # Guardrails blocked the request before streaming.
+                                    data = resp.json()
+                                else:
+                                    for line in resp.iter_lines(decode_unicode=True):
+                                        if not line or not line.startswith("data:"):
+                                            continue
+                                        event = json.loads(line[len("data:"):].strip())
+                                        if event.get("type") == "node":
+                                            node = event.get("node", "?")
+                                            plan = (event.get("plan") or [])[1:]
+                                            new_steps = [s for s in plan if s not in steps_rendered]
+                                            for step in new_steps:
+                                                steps_rendered.add(step)
+                                                st.markdown(f"⚙️ {step}")
+                                            status.update(label=f"Running: {node}...", expanded=True)
+                                        elif event.get("type") == "done":
+                                            data = event
+                                            status.update(label="✅ Answer Synthesized", state="complete", expanded=False)
+                                        elif event.get("type") == "error":
+                                            st.error(f"Backend Error: {event.get('message')}")
+                                            st.stop()
+                        else:
+                            response = requests.post(url, json=payload, timeout=180)
+                            if response.status_code != 200:
+                                st.error(f"Backend Error: {response.status_code} - {response.text}")
+                                st.stop()
+                            data = response.json()
 
-                        data = response.json()
-
-                    steps = data.get("thought_process", [])
-                    for step in steps:
-                        st.markdown(f"⚙️ {step}", unsafe_allow_html=False)
-
-                    status.update(label="✅ Answer Synthesized", state="complete", expanded=False)
+                    if not st.session_state.get("via_stream", False):
+                        steps = data.get("thought_process", [])
+                        for step in steps:
+                            st.markdown(f"⚙️ {step}", unsafe_allow_html=False)
+                        status.update(label="✅ Answer Synthesized", state="complete", expanded=False)
 
                 except Exception as e:
                     logfire.error(f"❌ UI-Backend Connection Failed: {e}")

@@ -4,7 +4,11 @@ import logfire
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
 from app.agents.state import AgentState
-from app.gateway import extract_cache_status, portkey_client
+from app.config import settings
+from app.gateway import cache as gateway_cache
+from app.gateway import extract_cache_status, gateway_model, portkey_client
+from app.gateway import metrics as gateway_metrics
+from app.safety.pii import mask_pii
 from app.services.prompts import render_prompt
 
 # Max characters of retrieved context passed to the LLM.
@@ -70,30 +74,41 @@ def generate_node(state: AgentState):
     else:
         logfire.info("Generating technical RAG response with citations.")
         documents = state.get("documents", [])
+        tool_results = state.get("tool_results") or ""
 
-        full_context = ""
-        for doc in documents:
-            if len(full_context) + len(doc.get("content", "")) < MAX_CONTEXT_CHARS:
-                full_context += doc.get("content", "") + "\n\n"
-            else:
-                logfire.warning("Context truncated to fit TPM limits.")
-                break
+        if state.get("intent") == "tool" and tool_results and not documents:
+            numbered_context = tool_results
+            max_index = "0"
+        else:
+            numbered_context = _build_numbered_context(documents)
+            max_index = str(len(documents))
 
-        numbered_context = _build_numbered_context(documents)
         prompt = render_prompt(
             "responder_technical",
             context=numbered_context,
             history=history_str,
             question=user_msg,
-            max_index=str(len(documents)),
+            max_index=max_index,
+            analysis=state.get("analysis") or "",
         )
 
     with logfire.span("✍️ LLM Synthesis"):
         try:
-            response = _generate_response(prompt, slug=state.get("slug"), model=state.get("model"))
-            content = response.choices[0].message.content
-            cache_status = extract_cache_status(response)
-            is_cache_hit = cache_status == "HIT"
+            content, cache_status = _generate_response_cached(
+                prompt, state.get("slug"), state.get("model")
+            )
+            is_cache_hit = cache_status in ("HIT", "REDIS")
+
+            # Output PII / secret masking (opt-in via MASK_PII_IN_OUTPUT).
+            if settings.MASK_PII_IN_OUTPUT and content:
+                masked, findings = mask_pii(content)
+                if findings:
+                    kinds = sorted({kind for kind, _ in findings})
+                    logfire.warning(f"🔒 Output PII masked: {', '.join(kinds)}")
+                    plan_update_hint = ", ".join(kinds)
+                content = masked
+            else:
+                plan_update_hint = None
 
             # Citation guard: verify every cited source is a real retrieved chunk.
             citation_warning = None
@@ -101,9 +116,9 @@ def generate_node(state: AgentState):
                 citation_warning = _check_citations(content, len(state.get("documents", [])))
 
             if is_cache_hit:
-                logfire.info("⚡ Gateway Cache Hit — response served from Portkey cache.")
-                plan_update = state["plan"] + ["Cache: Hit ⚡"]
-                status = "Cache hit — instant response."
+                logfire.info(f"⚡ Gateway Cache {cache_status} — response served from cache.")
+                plan_update = state["plan"] + [f"Cache: {cache_status} ⚡"]
+                status = f"Cache hit ({cache_status}) — instant response."
             else:
                 logfire.info("✅ Response synthesised via LLM.")
                 plan_update = state["plan"]
@@ -111,6 +126,9 @@ def generate_node(state: AgentState):
 
             if citation_warning:
                 plan_update = plan_update + ["⚠️ " + citation_warning]
+
+            if plan_update_hint:
+                plan_update = plan_update + [f"🔒 Output masked ({plan_update_hint})"]
 
             return {
                 "final_answer": content,
@@ -132,10 +150,56 @@ def generate_node(state: AgentState):
     before_sleep=before_sleep_log(logfire, "warning"),
 )
 def _generate_response(prompt: str, slug: str | None = None, model: str | None = None):
-    """Call the LLM gateway with retry logic for transient failures."""
-    from app.gateway import gateway_model
-
+    """Call the Portkey LLM gateway with retry logic."""
     return portkey_client.chat.completions.create(
         model=gateway_model(slug, model),
         messages=[{"role": "user", "content": prompt}],
     )
+
+
+def _generate_response_fallback(prompt: str, slug: str | None, model: str | None):
+    """_generate_response, falling back to a direct Groq call on gateway failure."""
+    try:
+        return _generate_response(prompt, slug, model)
+    except Exception:
+        from app.gateway.client import _fallback_groq_client, _fallback_groq_model
+
+        fallback = _fallback_groq_client()
+        if fallback is None:
+            raise
+        logfire.warning("⚠️ Portkey synthesis failed — falling back to direct Groq.")
+        return fallback.chat.completions.create(
+            model=_fallback_groq_model(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+
+def _generate_response_cached(prompt: str, slug: str | None, model: str | None) -> tuple[str, str]:
+    """
+    Redis-cached variant of _generate_response.
+
+    Returns (content, cache_status) where cache_status is 'REDIS' for a Redis
+    hit, the Portkey x-portkey-cache-status, or 'MISS'. Also records tokens &
+    approximate cost to Prometheus.
+    """
+    routing = gateway_model(slug, model)
+    cached = gateway_cache.cache_get("responder", routing, prompt)
+    if cached is not None:
+        gateway_metrics.GATEWAY_CACHE_HITS_TOTAL.labels(feature="responder").inc()
+        logfire.info("⚡ Redis cache hit (responder)")
+        return cached, "REDIS"
+
+    response = _generate_response_fallback(prompt, slug, model)
+    content = response.choices[0].message.content
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        gateway_metrics.record_usage(
+            "responder",
+            routing,
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+        )
+    gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature="responder", status="portkey").inc()
+    if content:
+        gateway_cache.cache_put("responder", routing, prompt, content)
+    return content, extract_cache_status(response)

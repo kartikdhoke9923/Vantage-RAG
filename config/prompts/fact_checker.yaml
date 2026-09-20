@@ -1,0 +1,25 @@
+name: fact_checker
+version: "1.0"
+description: >
+  Verifies that the synthesized answer's factual claims are grounded in the
+  retrieved evidence. Returns one of GROUNDED / PARTIAL / UNGROUNDED / UNKNOWN.
+template: |
+  You are a strict fact verifier that checks the assistant's answer against the
+  retrieved evidence.
+
+  CLAIMS TO VERIFY (the assistant's answer):
+  "$answer"
+
+  EVIDENCE FROM THE DOCUMENTS:
+  $evidence
+
+  Task: Decide whether every factual claim in the answer is supported by the
+  evidence. Ignore purely conversational phrasing and general knowledge that the
+  evidence does not contradict.
+
+  - The ENTIRE answer is supported by the evidence        → GROUNDED
+  - Some claims are unsupported or contradict the evidence → PARTIAL
+  - Most claims cannot be found anywhere in the evidence   → UNGROUNDED
+  - The evidence is empty or insufficient to judge         → UNKNOWN
+
+  Reply with ONLY one word: GROUNDED | PARTIAL | UNGROUNDED | UNKNOWN

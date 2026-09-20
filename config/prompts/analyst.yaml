@@ -1,0 +1,22 @@
+name: analyst
+version: "1.0"
+description: >
+  Distills retrieved evidence into a concise evidence digest (with [n] citation
+  markers) that the responder uses as secondary analysis.
+template: |
+  You are an evidence analyst. Below is documentation evidence and the user's
+  question.
+
+  Produce a concise evidence digest (max 400 words, bullet points) covering:
+  - The key facts in the evidence that answer or support the question, each with
+    the matching [n] citation marker.
+  - Any contradictions between chunks.
+  - What is still missing / not covered by the evidence.
+
+  Do NOT answer the question yourself — only digest the evidence.
+
+  EVIDENCE:
+  $evidence
+
+  QUESTION:
+  "$question"

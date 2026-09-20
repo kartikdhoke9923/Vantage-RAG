@@ -3,6 +3,8 @@ Phase 1 — Live Pipeline.
 Calls the running FastAPI /query endpoint for each golden sample.
 Captures: actual_response (truncated to 300 chars), actual_contexts (from sources),
 and actual_tools_called (detected from thought_process).
+
+/query is synchronous: it returns the answer (or a guardrails block) directly.
 """
 
 import copy
@@ -14,70 +16,82 @@ import logfire
 import requests
 
 API_URL = "http://localhost:8000/query"
-STATUS_URL_TEMPLATE = "http://localhost:8000/query/status/{job_id}"
 RESPONSE_TRUNCATE = 300
-DELAY_BETWEEN_CALLS = 10  # seconds — stays within Groq RPM on the main key
-REQUEST_TIMEOUT = 120  # seconds — guardrails + LangGraph + Groq can take >60s
-POLL_INTERVAL = 3  # seconds between job status polls
-MAX_POLL_ATTEMPTS = 60  # ~3 minutes max wait per sample
+DELAY_BETWEEN_CALLS = 10  # seconds — stays within the Groq/Portkey throughput on the main key
+REQUEST_TIMEOUT = 180  # seconds — guardrails + LangGraph + LLM can take >60s
+MAX_ATTEMPTS = 4  # retries on 429 (backend slowapi rate limiter)
+RETRY_WAIT = 60  # seconds between 429 retries when no Retry-After header is present
+_RETRYABLE = (429, 500, 502, 503, 504)  # rate-limit + transient server errors
+_RETRY_WAIT_5XX = 15  # seconds between 5xx retries
+
+
+def _post_with_retry(question: str, thread_id: str, timeout: int = REQUEST_TIMEOUT) -> "requests.Response":
+    """POST /query, backing off on 429/5xx so the eval suite survives the backend."""
+    resp = requests.post(
+        API_URL,
+        json={"q": question, "thread_id": thread_id},
+        timeout=timeout,
+    )
+    attempt = 1
+    while resp.status_code in _RETRYABLE and attempt < MAX_ATTEMPTS:
+        if resp.status_code == 429:
+            retry_after = (resp.headers.get("Retry-After") or "").strip()
+            wait = float(retry_after) if retry_after.isdigit() else RETRY_WAIT
+        else:
+            wait = _RETRY_WAIT_5XX
+        logfire.warning(
+            f"Transient error {resp.status_code}; waiting {wait:.0f}s before retry "
+            f"{attempt}/{MAX_ATTEMPTS - 1}.",
+            question=question[:80],
+        )
+        time.sleep(wait)
+        resp = requests.post(
+            API_URL,
+            json={"q": question, "thread_id": thread_id},
+            timeout=timeout,
+        )
+        attempt += 1
+    return resp
 
 
 def detect_tool(thought_process: list) -> str:
     """
-    Maps the thought_process list from /query response to a tool name.
-    Planner sets:  'Intent: Technical' + 'Search Term: ...' → retrieve_documents
-                   'Intent: Conversational/Memory'           → direct_answer
-    main.py sets:  'Intent: Guardrails Fired'                → guardrails
+    Maps the thought_process list from the current /query response to a tool name.
+
+    The orchestrator emits plan markers for the intent it chose:
+      'guardrails fired'                   → guardrails (blocked before the graph)
+      'orchestration: tool' / 'tool:'       → list_sources (tool_executor)
+      'orchestration: code' / 'sub-agent: coder' → coder
+      'sub-agent: researcher' / 'search term:' / 'intent: technical' → retrieve_documents
+      'intent: conversational'              → direct_answer
     """
-    joined = " ".join(thought_process).lower()
-    if "guardrails fired" in joined:
+    joined = " ".join(thought_process or []).lower()
+    if any(k in joined for k in ("guardrails fired", "intent: guardrails")):
         return "guardrails"
-    if "intent: technical" in joined or "search term:" in joined or "context retrieved" in joined:
+    if "orchestration: tool" in joined or "tool:" in joined:
+        return "list_sources"
+    if "orchestration: code" in joined or "sub-agent: coder" in joined:
+        return "coder"
+    if "orchestration: research" in joined or "sub-agent: researcher" in joined:
+        return "retrieve_documents"
+    if "intent: technical" in joined or "search term:" in joined:
         return "retrieve_documents"
     if "conversational" in joined or "memory" in joined:
         return "direct_answer"
     return "unknown"
 
 
-def _poll_for_result(job_id: str) -> dict:
-    """Poll /query/status until the Celery job completes or times out."""
-    url = STATUS_URL_TEMPLATE.format(job_id=job_id)
-    for attempt in range(MAX_POLL_ATTEMPTS):
-        with logfire.span("🔄 Eval polling job", job_id=job_id, attempt=attempt + 1):
-            resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            data = resp.json()
-
-        status = data.get("status", "UNKNOWN")
-        if status == "SUCCESS":
-            return data.get("result", {})
-        if status == "FAILURE":
-            error = data.get("error", "unknown failure")
-            raise RuntimeError(f"RAG job failed: {error}")
-        time.sleep(POLL_INTERVAL)
-
-    raise RuntimeError(f"Polling timed out for job {job_id}")
-
-
 def _fetch_query_result(question: str, thread_id: str) -> dict:
-    """Submit a query and return the final result (handling sync block + async jobs)."""
-    resp = requests.post(
-        API_URL,
-        json={"q": question, "thread_id": thread_id},
-        timeout=REQUEST_TIMEOUT,
-    )
+    """Submit a query and return the flat /query response (sync or guardrails block)."""
+    resp = _post_with_retry(question, thread_id)
     resp.raise_for_status()
     data = resp.json()
 
-    # Guardrails can block synchronously without creating a job.
-    if data.get("status") == "Blocked by guardrails." or "answer" in data:
+    if data.get("status") == "Blocked by guardrails.":
         return data
-
-    job_id = data.get("job_id")
-    if not job_id:
-        raise RuntimeError(f"Unexpected /query response: {data}")
-
-    return _poll_for_result(job_id)
+    if "answer" in data:
+        return data
+    raise RuntimeError(f"Unexpected /query response: {data}")
 
 
 def run_pipeline(golden_dataset: dict, progress_callback=None) -> dict:
@@ -152,17 +166,17 @@ def save_results(dataset: dict, path: str) -> None:
 def load_golden_dataset() -> dict:
     """Load a golden eval dataset.
 
-    The dataset is produced by ingestion runs, so both files are treated as
-    disposable artifacts. Set EVAL_DATASET to point at a fresh dataset path
-    (defaults to evals/golden_dataset.json).
+    The dataset is produced by evals/build_golden.py (or exported by ingestion
+    runs), so it is treated as a disposable artifact. Set EVAL_DATASET to point
+    at a fresh dataset path (defaults to evals/golden_dataset.json).
     """
     golden_path = os.getenv("EVAL_DATASET") or os.path.join(
         os.path.dirname(__file__), "golden_dataset.json"
     )
     if not os.path.exists(golden_path):
         raise FileNotFoundError(
-            f"No eval dataset found at {golden_path}. Drop a freshly exported "
-            "golden_dataset.json into evals/, or set EVAL_DATASET to point at one."
+            f"No eval dataset found at {golden_path}. Generate one with "
+            "`uv run python -m evals.build_golden`, or set EVAL_DATASET to point at one."
         )
     with open(golden_path) as f:
         return json.load(f)

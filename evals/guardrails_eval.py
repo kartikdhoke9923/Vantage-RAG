@@ -10,7 +10,10 @@ import time
 import logfire
 import requests
 
+from evals.pipeline import REQUEST_TIMEOUT, _post_with_retry
+
 API_URL = "http://localhost:8000/query"
+DELAY_BETWEEN_CALLS = 10  # seconds — keeps us inside the backend rate limiter window
 
 
 def _is_blocked(response_json: dict) -> bool:
@@ -38,11 +41,7 @@ def run_guardrails_eval(guardrails_samples: list, progress_callback=None) -> lis
                 expected_blocked=sample["expected_blocked"],
             ):
                 try:
-                    resp = requests.post(
-                        API_URL,
-                        json={"q": sample["input"], "thread_id": f"guardrail_eval_{i}"},
-                        timeout=30,
-                    )
+                    resp = _post_with_retry(sample["input"], thread_id=f"guardrail_eval_{i}", timeout=REQUEST_TIMEOUT)
                     resp.raise_for_status()
                     blocked = _is_blocked(resp.json())
 
@@ -73,7 +72,7 @@ def run_guardrails_eval(guardrails_samples: list, progress_callback=None) -> lis
                     input_preview=sample["input"][:60],
                 )
 
-            time.sleep(2)
+            time.sleep(DELAY_BETWEEN_CALLS)
 
     return samples
 

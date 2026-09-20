@@ -4,6 +4,8 @@ from openai import AsyncOpenAI, OpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.config import settings
+from app.gateway import cache
+from app.gateway import metrics as gateway_metrics
 
 # Portkey routing strategy:
 #   - Primary/fallback logic lives in a Portkey saved config referenced via the
@@ -119,3 +121,102 @@ def extract_cache_status(response) -> str:
                 if status:
                     return status.upper()
     return "MISS"
+
+
+# ---------------------------------------------------------------------------
+# Fallback chain + usage + cost
+# ---------------------------------------------------------------------------
+
+def _fallback_groq_llm() -> ChatOpenAI | None:
+    """Direct-to-Groq ChatOpenAI used when the Portkey gateway fails.
+
+    Uses GROQ_FALLBACK_API_KEY first, then GROQ_API_KEY. Returns None when no
+    Groq key is configured (the chain then fails loudly = gate-off).
+    """
+    api_key = settings.GROQ_FALLBACK_API_KEY or settings.GROQ_API_KEY
+    if not api_key:
+        return None
+    return ChatOpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+        model=settings.GUARDRAIL_MODEL or "openai/gpt-oss-20b",
+    )
+
+
+def _fallback_groq_model() -> str:
+    """Model used by the direct-Groq fallback path."""
+    return settings.GUARDRAIL_MODEL or "openai/gpt-oss-20b"
+
+
+def _fallback_groq_client() -> "OpenAI | None":
+    """OpenAI SDK client pointed straight at Groq (same key/model as _fallback_groq_llm).
+
+    Returns None when no Groq key is configured (the chain then fails loudly = gate-off).
+    """
+    api_key = settings.GROQ_FALLBACK_API_KEY or settings.GROQ_API_KEY
+    if not api_key:
+        return None
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+
+
+def _message_usage(message) -> tuple[int, int]:
+    """Best-effort (prompt_tokens, completion_tokens) from a ChatOpenAI result."""
+    metadata = getattr(message, "usage_metadata", None) or {}
+    if metadata:
+        return int(metadata.get("prompt_tokens") or 0), int(metadata.get("completion_tokens") or 0)
+    response_metadata = getattr(message, "response_metadata", None) or {}
+    usage = response_metadata.get("token_usage") or {}
+    return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+
+
+def invoke_llm_with_fallback(
+    prompt: str,
+    feature: str = "rag",
+    slug: str | None = None,
+    model: str | None = None,
+) -> str:
+    """
+    Invoke the LLM with an in-code fallback chain and optional Redis caching.
+
+    Chain order:
+      1. Portkey gateway with the per-request slug/model override.
+      2. Portkey gateway with settings defaults (covers a bad UI override).
+      3. Direct Groq fallback key → openai/gpt-oss-20b.
+      4. Gate-off: re-raise the last error (never silently swallow failures).
+
+    Each successful call also records tokens + approx cost as Prometheus
+    metrics (see gateway/metrics.py). Responses are cached in Redis when the
+    feature/model/prompt triple has been served before.
+    """
+    routing_model = gateway_model(slug, model)
+
+    def _produce() -> str:
+        attempts: list[tuple[str, ChatOpenAI]] = [(gateway_model(slug, model), get_langchain_llm(feature, slug, model))]
+        if slug or model:
+            attempts.append((gateway_model(), get_langchain_llm(feature)))
+        fallback = _fallback_groq_llm()
+        if fallback is not None:
+            attempts.append(("groq-fallback", fallback))
+
+        last_error: Exception | None = None
+        for status_label, llm in attempts:
+            try:
+                message = llm.invoke(prompt)
+                pt, ct = _message_usage(message)
+                gateway_metrics.record_usage(feature, status_label, pt, ct)
+                gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature=feature, status=status_label).inc()
+                logfire.info(
+                    f"🔁 Gateway '{status_label}' ok ({pt} prompt / {ct} completion tokens)."
+                )
+                return message.content
+            except Exception as e:  # noqa: BLE001 - fallback chain requires a blind catch
+                last_error = e
+                logfire.error(f"⚠️ Gateway '{status_label}' failed: {e}")
+                gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature=feature, status="error").inc()
+
+        raise RuntimeError(f"LLM gateway unavailable for '{feature}': {last_error}")
+
+    return cache.cached_completion(feature, routing_model, prompt, _produce)

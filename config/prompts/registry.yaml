@@ -8,6 +8,10 @@ defaults:
     planner: "1.0"
     responder_technical: "1.0"
     responder_conversational: "1.0"
+    fact_checker: "1.0"
+    researcher: "1.0"
+    analyst: "1.0"
+    coder: "1.0"
 prompts:
   planner:
     file: planner.yaml
@@ -15,3 +19,11 @@ prompts:
     file: responder_technical.yaml
   responder_conversational:
     file: responder_conversational.yaml
+  fact_checker:
+    file: fact_checker.yaml
+  researcher:
+    file: researcher.yaml
+  analyst:
+    file: analyst.yaml
+  coder:
+    file: coder.yaml

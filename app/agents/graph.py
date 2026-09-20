@@ -3,9 +3,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from app.agents.nodes.analyst import analyst_node
+from app.agents.nodes.coder import coder_node
+from app.agents.nodes.fact_checker import fact_check_node
+from app.agents.nodes.orchestrator import orchestrator_node
 from app.agents.nodes.planner import planner_node
+from app.agents.nodes.researcher import researcher_node
 from app.agents.nodes.responder import generate_node
-from app.agents.nodes.retriever import retrieve_node
+from app.agents.nodes.tool_executor import tool_executor_node
 from app.agents.state import AgentState
 from app.config import settings
 
@@ -84,25 +89,48 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> StateGraph:
 
     # 2. Define the Nodes
     workflow.add_node("planner", planner_node)
-    workflow.add_node("retriever", retrieve_node)
+    workflow.add_node("orchestrator", orchestrator_node)
+    workflow.add_node("tool_executor", tool_executor_node)
+    workflow.add_node("researcher", researcher_node)
+    workflow.add_node("analyst", analyst_node)
+    workflow.add_node("coder", coder_node)
     workflow.add_node("responder", generate_node)
+    workflow.add_node("fact_checker", fact_check_node)
 
     # 3. Define the Edges & Routing Logic
-    def route_planner(state: AgentState):
-        """
-        Routes the workflow based on the planner's decision.
-        """
-        if state["current_query"] == "CONVERSATIONAL":
-            return "responder"
-        return "retriever"
+    def route_orchestrator(state: AgentState):
+        """Route by the orchestrator's intent classification (map key, not node)."""
+        return state.get("intent", "research")
+
+    def route_after_research(state: AgentState):
+        """Researchers gather evidence; analysts/coder digest it."""
+        return "coder" if state.get("intent") == "code" else "analyst"
 
     workflow.set_entry_point("planner")
 
-    # Conditional Edge: Planner -> Router -> (Retriever OR Responder)
-    workflow.add_conditional_edges("planner", route_planner, {"retriever": "retriever", "responder": "responder"})
+    # Conditional Edge: Planner -> Orchestrator -> Agent path -> Responder.
+    workflow.add_edge("planner", "orchestrator")
+    workflow.add_conditional_edges(
+        "orchestrator",
+        route_orchestrator,
+        {
+            "chat": "responder",
+            "tool": "tool_executor",
+            "research": "researcher",
+            "code": "researcher",
+        },
+    )
+    workflow.add_conditional_edges(
+        "researcher",
+        route_after_research,
+        {"analyst": "analyst", "coder": "coder"},
+    )
 
-    workflow.add_edge("retriever", "responder")
-    workflow.add_edge("responder", END)
+    workflow.add_edge("tool_executor", "responder")
+    workflow.add_edge("analyst", "responder")
+    workflow.add_edge("coder", "responder")
+    workflow.add_edge("responder", "fact_checker")
+    workflow.add_edge("fact_checker", END)
 
     # 4. Compile the Graph with Memory
     return workflow.compile(checkpointer=checkpointer)

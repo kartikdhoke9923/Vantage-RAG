@@ -15,6 +15,14 @@ class AgentState(TypedDict):
     final_answer: str
     # Citation guard output: any problems found in the generated answer.
     citation_warning: str | None
+    # Fact-checker verdict: GROUNDED / PARTIAL / UNGROUNDED / UNKNOWN / SKIPPED.
+    fact_check: str | None
+    # Orchestration intent: chat | tool | research | code (set by orchestrator).
+    intent: str
+    # Sub-agent outputs.
+    sub_queries: list[str]          # researcher's decomposed retrieval queries
+    analysis: str | None            # analyst / coder evidence digest for the responder
+    tool_results: str | None        # tool_executor output (e.g. list_sources)
     # Per-request Portkey gateway overrides from the UI. When absent, the
     # settings defaults (PORTKEY_PRIMARY_SLUG / PORTKEY_PRIMARY_MODEL) apply.
     slug: NotRequired[str | None]

@@ -1,0 +1,22 @@
+name: coder
+version: "1.0"
+description: >
+  Extracts code-relevant guidance (settings, APIs, commands, config patterns)
+  from the retrieved evidence for coding questions.
+template: |
+  You are a senior platform engineer. Below is documentation evidence and a
+  coding question.
+
+  Extract ONLY the code-relevant guidance from the evidence: relevant
+  configuration keys, API endpoints, CLI commands, YAML/Helm patterns, or code
+  snippets — each with the matching [n] citation marker. Note any version or
+  environment caveats.
+
+  Keep it under 300 words and do NOT write the full solution — the synthesizer
+  will write the final answer.
+
+  EVIDENCE:
+  $evidence
+
+  CODING QUESTION:
+  "$question"
