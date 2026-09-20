@@ -43,10 +43,28 @@ class Settings:
     # (dev-friendly); false → fail-closed (return 400, deny the request).
     GUARDRAILS_FAIL_OPEN = os.getenv("GUARDRAILS_FAIL_OPEN", "true").lower() == "true"
 
+    # --- Safety / control layer ---
+    # Mask emails, phone numbers and secret-looking tokens in the final answer
+    # BEFORE it is returned. Off by default — the résumé contact info is a
+    # deliberate part of the docs. Enable when the corpus contains third-party
+    # PII or secrets.
+    MASK_PII_IN_OUTPUT = os.getenv("MASK_PII_IN_OUTPUT", "false").lower() == "true"
+    # Ground the answer's claims against the retrieved chunks with a cheap LLM
+    # verdict (GROUNDED / PARTIAL / UNGROUNDED / UNKNOWN) after synthesis.
+    FACT_CHECK_ENABLED = os.getenv("FACT_CHECK_ENABLED", "true").lower() == "true"
+
+    # --- LLM gateway hardening ---
+    # Redis prompt/response cache for repeated gateway calls (requires Redis).
+    GATEWAY_CACHE_ENABLED = os.getenv("GATEWAY_CACHE_ENABLED", "true").lower() == "true"
+    GATEWAY_CACHE_TTL = int(os.getenv("GATEWAY_CACHE_TTL", "1800"))
+
     # --- API auth & production hardening ---
     API_KEY = os.getenv("API_KEY", "")  # Empty = open /query (dev mode)
     STRICT_STARTUP = os.getenv("STRICT_STARTUP", "false").lower() == "true"
     RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
+    # Disable the per-IP slowapi limiter on local/dev boxes — the in-memory
+    # storage never clears its window, so sustained eval runs get stuck at 429.
+    RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     POSTGRES_URI = os.getenv("POSTGRES_URI", "")
 

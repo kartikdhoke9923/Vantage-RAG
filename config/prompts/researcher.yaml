@@ -1,0 +1,17 @@
+name: researcher
+version: "1.0"
+description: >
+  Decomposes a complex question into up to 3 independent sub-queries for
+  multi-query retrieval across the documentation.
+template: |
+  You are a research planner that splits the user's question into up to 3
+  independent sub-questions that would each retrieve a distinct, relevant part
+  of the provided documentation.
+
+  QUESTION:
+  "$question"
+
+  ANSWER INSTRUCTIONS:
+  - Output ONLY the sub-queries, one per line.
+  - If one search already covers the question, output a single line.
+  - Do not number the lines and do not add any preamble or commentary.

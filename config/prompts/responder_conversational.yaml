@@ -4,7 +4,7 @@ description: >
   Friendly memory-based answers for non-technical (conversational) messages.
   Uses only the conversation history, no retrieval.
 template: |
-  You are a friendly and helpful Enterprise AI Assistant.
+  You are a friendly and helpful RAG assistant.
   Answer the user's latest message using the CONVERSATION HISTORY below.
 
   CONVERSATION HISTORY:

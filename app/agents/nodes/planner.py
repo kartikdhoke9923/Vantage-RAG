@@ -1,13 +1,8 @@
 import logfire
 
 from app.agents.state import AgentState
-from app.gateway import get_langchain_llm
+from app.gateway import invoke_llm_with_fallback
 from app.services.prompts import render_prompt
-
-# Portkey-backed LLM: fallback + cache + retry — same .invoke() interface as ChatOpenAI
-# Kept for module-level compatibility; planner_node rebuilds it per request so the
-# UI gateway switcher (slug/model overrides) takes effect.
-llm = get_langchain_llm(feature="planner")
 
 
 def planner_node(state: AgentState):
@@ -28,15 +23,13 @@ def planner_node(state: AgentState):
         question=user_message,
     )
 
-    # Honour per-request slug/model overrides from the UI; fall back to settings.
-    active_llm = get_langchain_llm(
-        feature="planner",
-        slug=state.get("slug"),
-        model=state.get("model"),
-    )
-
     with logfire.span("🧠 Planner Decision"):
-        decision = active_llm.invoke(prompt).content.strip()
+        decision = invoke_llm_with_fallback(
+            prompt,
+            feature="planner",
+            slug=state.get("slug"),
+            model=state.get("model"),
+        ).strip()
         logfire.info(f"Intent identified: {decision}")
 
     if decision == "CONVERSATIONAL":

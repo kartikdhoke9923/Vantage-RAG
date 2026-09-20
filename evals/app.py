@@ -31,7 +31,7 @@ from evals.pipeline import load_golden_dataset, run_pipeline
 # Page config
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Enterprise RAG — Eval Suite",
+    page_title="Vantage RAG — Eval Suite",
     page_icon="🧪",
     layout="wide",
 )
@@ -105,7 +105,7 @@ golden = st.session_state.golden
 # ─────────────────────────────────────────────────────────────────────────────
 # Header
 # ─────────────────────────────────────────────────────────────────────────────
-st.title("🧪 Enterprise RAG — Evaluation Suite")
+st.title("🧪 Vantage RAG — Evaluation Suite")
 st.caption("Step 1: Review ground truth → Step 2: Run live pipeline → Step 3: Score with RAGAS")
 st.divider()
 
@@ -121,7 +121,7 @@ tab1, tab2, tab3 = st.tabs(["📋 Step 1 — Ground Truth", "🚀 Step 2 — Liv
 with tab1:
     st.subheader("Ground Truth Dataset")
     st.markdown(
-        "These are the **golden Q&A pairs** built by parsing your real enterprise documents. "
+        "These are the **golden Q&A pairs** built by parsing your real source documents. "
         "Each entry has a question, a reference answer (ground truth), and the expected tool the RAG agent should call."
     )
 
@@ -138,7 +138,8 @@ with tab1:
         )
     df_golden = pd.DataFrame(rag_rows)
     st.dataframe(df_golden, use_container_width=True, hide_index=True)
-    st.caption(f"✅ {len(rag_rows)} golden RAG samples from 5 enterprise docs")
+    n_sources = len({s.get("source") for s in golden.get("rag_samples", []) if s.get("source")})
+    st.caption(f"✅ {len(rag_rows)} golden RAG samples from {n_sources} source docs")
 
     st.divider()
 
@@ -343,13 +344,13 @@ with tab3:
     else:
         st.markdown(
             "Runs all **6 metric experiments** on the stored responses. "
-            "LLM-based metrics use `JUDGE_OPENAI_API_KEY` — samples are scored one at a time "
-            "with 40s cooldowns between samples as a conservative rate-limit buffer. "
-            "Total runtime: ~50 min."
+            "LLM-based metrics use the **Portkey gateway judge** (openai/gpt-oss-20b) — "
+            "samples are scored one at a time with 40s cooldowns between samples as a "
+            "conservative throughput buffer. Total runtime: ~50 min."
         )
         st.info(
-            "Token key used: `JUDGE_OPENAI_API_KEY` (separate from production key). "
-            "Each sample is processed individually to stay within OpenAI rate limits.",
+            "Judge: Portkey `@slug/model` gateway (same chain as production, no extra key). "
+            "Each sample is processed individually to stay within provider throughput.",
             icon="ℹ️",
         )
 

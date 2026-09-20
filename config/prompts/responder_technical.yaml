@@ -24,6 +24,10 @@ template: |
   TECHNICAL CONTEXT:
   $context
 
+  EVIDENCE ANALYSIS (secondary input from the analyst sub-agent; use it only
+  when it agrees with TECHNICAL CONTEXT, and still cite TECHNICAL CONTEXT):
+  $analysis
+
   CONVERSATION HISTORY:
   $history
 
