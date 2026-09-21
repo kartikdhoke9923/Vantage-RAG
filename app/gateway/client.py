@@ -64,7 +64,7 @@ portkey_client = OpenAI(
     api_key=_api_key(),
     base_url=PORTKEY_GATEWAY_URL,
     default_headers=_make_headers(),
-    timeout=40.0,  # bound a hung provider so rotation/fallback can engage
+    timeout=12.0,  # bound a hung provider so rotation/fallback can engage
 )
 
 
@@ -91,7 +91,7 @@ def get_langchain_llm(feature: str = "rag", slug: str | None = None, model: str 
         base_url=PORTKEY_GATEWAY_URL,
         model=gateway_model(slug, model),
         default_headers=_make_headers(feature),
-        request_timeout=40.0,
+        request_timeout=12.0,
     )
 
 
@@ -104,7 +104,7 @@ def get_async_openai_client(feature: str = "rag") -> AsyncOpenAI:
         api_key=_api_key(),
         base_url=PORTKEY_GATEWAY_URL,
         default_headers=_make_headers(feature),
-        timeout=40.0,
+        timeout=12.0,
     )
 
 
@@ -144,7 +144,7 @@ def _fallback_groq_llm() -> ChatOpenAI | None:
         api_key=api_key,
         base_url="https://api.groq.com/openai/v1",
         model=settings.GUARDRAIL_MODEL or "openai/gpt-oss-20b",
-        request_timeout=40.0,
+        request_timeout=12.0,
     )
 
 
@@ -164,7 +164,7 @@ def _fallback_groq_client() -> "OpenAI | None":
     return OpenAI(
         api_key=api_key,
         base_url="https://api.groq.com/openai/v1",
-        timeout=40.0,
+        timeout=12.0,
     )
 
 

@@ -53,6 +53,8 @@ git push -u origin main
    - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG`, `PORTKEY_PRIMARY_MODEL`
    - `PORTKEY_MODEL_GUARDRAIL`, `PORTKEY_MODEL_PLANNER`,
      `PORTKEY_MODEL_RESPONDER`
+   - `GUARDRAIL_MODEL` — `openai/gpt-oss-20b` (used by the direct-Groq fallback;
+     keep the `.env` value)
    - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`
    - `CHROMA_COLLECTION` — *optional*; if unset the app defaults to
      `enterprise_rag`
@@ -64,6 +66,8 @@ git push -u origin main
    - `ADMIN_TOKEN` — already generated in `.env` as `ADMIN_TOKEN`. Use that
      exact value here **and** in Lovable (`VITE_ADMIN_TOKEN`).
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
+   - `FACT_CHECK_ENABLED` — set **`false`** to skip the extra fact-check LLM hop
+     (cuts per-query latency; matches the fast model setup)
 
    Ignore any suggestion of `PORTKEY_API_BASE` / `PORTKEY_VIRTUAL_KEY` — the
    gateway uses only `PORTKEY_API_KEY` plus a constant URL from `portkey_ai`.

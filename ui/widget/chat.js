@@ -115,34 +115,74 @@
     input.disabled = busy;
   }
 
+  function genThreadId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  function handleEvent(part) {
+    var text = String(part).trim();
+    if (!text || text.indexOf("data:") !== 0) return;
+    var data;
+    try { data = JSON.parse(text.slice(5).trim()); } catch (e) { return; }
+
+    if (data.type === "node" && data.status) {
+      typing.textContent = "Vantage is thinking — " + data.status;
+    } else if (data.type === "done") {
+      setBusy(false);
+      typing.textContent = "Vantage is thinking";
+      addMsg(data.answer || "Hmm, I didn't get a response.", "bot");
+    } else if (data.type === "error") {
+      throw new Error(data.message || "Server error.");
+    }
+  }
+
   function ask(text) {
     addMsg(text, "user");
     input.value = "";
+    if (!threadId) {
+      threadId = genThreadId();
+      localStorage.setItem(threadKey, threadId);
+    }
     setBusy(true);
+    typing.textContent = "Vantage is thinking";
 
-    var payload = { q: text, thread_id: threadId || null };
-    fetch(api.replace(/\/$/, "") + "/query", {
+    var payload = { q: text, thread_id: threadId };
+    fetch(api.replace(/\/$/, "") + "/query/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     })
       .then(function (resp) {
-        setBusy(false);
         if (!resp.ok) {
           return resp.json().then(function (body) {
             throw new Error((body && body.message) || ("HTTP " + resp.status));
           });
         }
-        return resp.json();
-      })
-      .then(function (data) {
-        if (!threadId && data && data.thread_id) {
-          threadId = data.thread_id;
-          localStorage.setItem(threadKey, threadId);
+        if (!resp.body) {
+          return resp.json().then(function (data) {
+            setBusy(false);
+            addMsg(data.answer || "Hmm, I didn't get a response.", "bot");
+          });
         }
-        addMsg(data.answer || "Hmm, I didn't get a response.", "bot");
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder("utf-8");
+        var buffer = "";
+        function pump(streamResult) {
+          if (streamResult.done) {
+            setBusy(false);
+            return;
+          }
+          buffer += decoder.decode(streamResult.value, { stream: true });
+          var parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          parts.forEach(handleEvent);
+          return reader.read().then(pump);
+        }
+        return reader.read().then(pump);
       })
       .catch(function (err) {
+        setBusy(false);
         showError(err.message || "Something went wrong.");
       });
   }
@@ -170,7 +210,7 @@
   function openChat() {
     launcher.classList.add("vw-hide");
     panel.classList.remove("vw-hide");
-    if (threadId === null) ask(greeting);
+    if (!threadId) addMsg(greeting, "bot");
     input.focus();
   }
   function closeChat() {
