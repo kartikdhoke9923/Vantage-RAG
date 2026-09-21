@@ -48,20 +48,25 @@ git push -u origin main
    **Native Docker** runtime manually: build = `docker build .`,
    start = `uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}`.
 3. Pick plan **Free**.
-4. In **Environment**, set the `sync: false` secrets as env vars
-   (values from your working `.env`):
-   - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG` (`openrouter`),
-     `PORTKEY_PRIMARY_MODEL` (`qwen/qwen3.8-27b:free`)
-   - `PORTKEY_MODEL_GUARDRAIL` (`@openrouter/qwen/qwen3.8-27b:free`),
-     `PORTKEY_MODEL_PLANNER` (`@gemini/gemini-3.6-flash`),
-     `PORTKEY_MODEL_RESPONDER` (`@policy/openai/gpt-oss-20b`)
-   - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`,
-     `CHROMA_COLLECTION`
+4. In **Environment**, set the `sync: false` secrets as env vars. Most values
+   copy straight from your working `.env`; the complete list is:
+   - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG`, `PORTKEY_PRIMARY_MODEL`
+   - `PORTKEY_MODEL_GUARDRAIL`, `PORTKEY_MODEL_PLANNER`,
+     `PORTKEY_MODEL_RESPONDER`
+   - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`
+   - `CHROMA_COLLECTION` — *optional*; if unset the app defaults to
+     `enterprise_rag`
    - `JINA_API_KEY`
-   - `POSTGRES_URI` (Neon — the **unpooled** URL, `?sslmode=require`)
+   - `POSTGRES_URI` — use the value of **`DATABASE_URL_UNPOOLED`** from `.env`
+     (the unpooled Neon URL). The checkpointer needs it for `CREATE INDEX
+     CONCURRENTLY`; the pooled `-pooler` endpoint breaks that migration.
    - `LOGFIRE_TOKEN`
-   - `ADMIN_TOKEN` (your random hex string)
+   - `ADMIN_TOKEN` — already generated in `.env` as `ADMIN_TOKEN`. Use that
+     exact value here **and** in Lovable (`VITE_ADMIN_TOKEN`).
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
+
+   Ignore any suggestion of `PORTKEY_API_BASE` / `PORTKEY_VIRTUAL_KEY` — the
+   gateway uses only `PORTKEY_API_KEY` plus a constant URL from `portkey_ai`.
 5. Deploy. Watch logs for the startup summary (Chroma collection ready,
    scheduler started, admin tables ready).
 
@@ -69,7 +74,9 @@ git push -u origin main
 
 The domain uses nameservers `dns[1-4].p04.nsone.net` (managed DNS on NS1).
 
-1. In your NS1 dashboard → zone `kartikworks.co.in` → add a **CNAME** record:
+1. In your NS1 dashboard → zone `kartikworks.co.in` → add a **CNAME** record
+   (only possible *after* the Render service exists — its `.onrender.com`
+   address is shown in the service's dashboard):
    - name: `api`
    - answer/canonical: `<your-service>.onrender.com`
    - TTL: default (60–300s)
@@ -98,8 +105,11 @@ Edit `D:\kartikworks` (details in the repo's own to-do) — the gist:
         data-subtitle="Powered by Vantage RAG"></script>
 ```
 
-Push + republish via Lovable. The admin "Chatbot" section (cron toggle,
-run-now, job/chat logs, stats) calls `/admin-api/*` with `VITE_ADMIN_TOKEN`.
+Push + republish via Lovable. Before that, set `VITE_ADMIN_TOKEN` in the
+Lovable project **Environment settings** to the exact `ADMIN_TOKEN` value from
+`.env` (build-time var), then redeploy the site. The admin "Chatbot" section
+(cron toggle, run-now, job/chat logs, stats) calls `/admin-api/*` with that
+token in the `X-Admin-Token` header.
 
 ## Verification
 

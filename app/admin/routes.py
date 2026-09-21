@@ -4,7 +4,7 @@ Every route lives under /admin-api and requires the X-Admin-Token header to
 match ADMIN_TOKEN. The site's Supabase login is the front door; this token is
 the second layer that gates backend control.
 """
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from app import db
