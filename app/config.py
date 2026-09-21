@@ -33,6 +33,13 @@ class Settings:
     PORTKEY_PRIMARY_MODEL = os.getenv("PORTKEY_PRIMARY_MODEL", "openai/gpt-oss-20b")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+    # --- Per-role model pool (full @slug/model routing strings) ---
+    # One fixed model per role; on failure the gateway rotates to the next model
+    # in the pool that isn't in its cool-down window. Empty → default primary.
+    PORTKEY_MODEL_GUARDRAIL = os.getenv("PORTKEY_MODEL_GUARDRAIL", "")
+    PORTKEY_MODEL_PLANNER = os.getenv("PORTKEY_MODEL_PLANNER", "")
+    PORTKEY_MODEL_RESPONDER = os.getenv("PORTKEY_MODEL_RESPONDER", "")
+
     # --- Guardrails (NeMo) ---
     # LLM used by the NeMo gate. Empty → provider default per rails.py:
     #   OPENAI_API_KEY set → gpt-5-mini; else GROQ_API_KEY → openai/gpt-oss-20b.
@@ -78,6 +85,27 @@ class Settings:
 
     LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN")
     LOGFIRE_BASE_URL = os.getenv("LOGFIRE_BASE_URL")
+
+    # --- Deployment / widget / admin ---
+    # CORS allow-list (comma separated) for the widget + admin cross-origin calls.
+    ALLOWED_ORIGINS = os.getenv(
+        "ALLOWED_ORIGINS", "https://kartikworks.co.in,https://www.kartikworks.co.in"
+    )
+    # Public base URL of the backend (used by widget/admin as the API root).
+    APP_BASE_URL = os.getenv("APP_BASE_URL", "")
+    # Shared secret between the site admin and /admin-api (the Supabase login is
+    # the front door; this is a second capability layer).
+    ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+    # Records chat queries into the chat_logs table (toggle off to save Neon IO).
+    ADMIN_LOGGING_ENABLED = os.getenv("ADMIN_LOGGING_ENABLED", "true").lower() == "true"
+    # Render injects PORT for the web service; local default is 8000.
+    PORT = int(os.getenv("PORT", "8000"))
+    # Folder the daily ingestion scheduler re-reads (baked into the image at deploy).
+    DATA_DIR = os.getenv("DATA_DIR", "data")
+    # Hour (UTC 0-23) the daily re-ingestion tick fires.
+    DAILY_INGEST_HOUR = int(os.getenv("DAILY_INGEST_HOUR", "5"))
+    # Source type tag applied to ingested docs when data/ has no sub-folders.
+    DATA_SOURCE_TYPE = os.getenv("DATA_SOURCE_TYPE", "true")
 
 
 settings = Settings()  # did becuaue directly from environment variables,

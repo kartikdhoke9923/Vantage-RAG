@@ -1,0 +1,23 @@
+# .venv is a Windows venv — never into the image
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+# never bake secrets into the image
+.env
+.env.prod
+.env.prod.local
+# heavy local-only folders
+node_modules/
+uv.lock
+package-lock.json
+.logfire/
+.ruff_cache/
+.deepeval/
+notebooks/
+evals/
+tools/
+body.json
+processed_data/
+nul

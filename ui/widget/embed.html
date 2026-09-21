@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vantage widget preview</title>
+    <style>
+      body { margin: 0; min-height: 100vh; background: #0c1a20; color: #e6f0f3;
+        font-family: Georgia, serif; display: grid; place-items: center; }
+      main { max-width: 560px; text-align: center; padding: 32px; }
+      h1 { font-size: 28px; }
+      p { color: #93a8b0; font-family: sans-serif; }
+      code { background: #14242c; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Chat widget preview</h1>
+      <p>This page is a local sandbox. Open the launcher (bottom-right) to test
+      the widget against a running backend on <code>localhost:8000</code>.</p>
+    </main>
+    <script src="chat.js"
+            data-api="http://localhost:8000"
+            data-title="Ask Kartik"></script>
+  </body>
+</html>
