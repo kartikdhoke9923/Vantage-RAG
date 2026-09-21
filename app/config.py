@@ -49,6 +49,9 @@ class Settings:
     # If the rail provider errors at query time: true → log + proceed to RAG
     # (dev-friendly); false → fail-closed (return 400, deny the request).
     GUARDRAILS_FAIL_OPEN = os.getenv("GUARDRAILS_FAIL_OPEN", "true").lower() == "true"
+    # Master switch for the guardrails gate. Set false to skip the gate's LLM
+    # call entirely (instant pass-through) — handy on a slow/free provider.
+    GUARDRAILS_ENABLED = os.getenv("GUARDRAILS_ENABLED", "true").lower() == "true"
 
     # --- Safety / control layer ---
     # Mask emails, phone numbers and secret-looking tokens in the final answer

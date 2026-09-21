@@ -52,11 +52,12 @@ git push -u origin main
    copy straight from your working `.env`; the complete list is:
    - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG` (`policy`),
      `PORTKEY_PRIMARY_MODEL` (`openai/gpt-oss-20b`)
-   - `PORTKEY_MODEL_GUARDRAIL`, `PORTKEY_MODEL_PLANNER`,
-     `PORTKEY_MODEL_RESPONDER` — set all three to
-     `@policy/openai/gpt-oss-20b` (the one fast/working route in this
-     Portkey workspace; OpenRouter-free is upstream rate-limited, and there
-     is no `groq` slug)
+   - `PORTKEY_MODEL_GUARDRAIL` = `@policy/openai/gpt-oss-20b`,
+     `PORTKEY_MODEL_PLANNER` = `@policy2/openai/gpt-oss-20b`,
+     `PORTKEY_MODEL_RESPONDER` = `@policy3/openai/gpt-oss-20b` — each role's
+     first pick lands on a different Groq-backed slug (policy / policy2 /
+     policy3); the gateway auto-rotates across all three on 429/failure.
+     Keep them on DIFFERENT slugs to spread load across the 3 Groq keys.
    - `GUARDRAIL_MODEL` — `openai/gpt-oss-20b` (used by the direct-Groq fallback;
      keep the `.env` value)
    - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`
@@ -72,6 +73,9 @@ git push -u origin main
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
    - `FACT_CHECK_ENABLED` — set **`false`** to skip the extra fact-check LLM hop
      (cuts per-query latency; matches the fast model setup)
+   - `GUARDRAILS_ENABLED` — *optional*; default `true`. The gate is bounded to
+     a single 8s / 128-token call that fails open on error. Set
+     `false` to disable the gate entirely if a slow provider still stalls it.
 
    Ignore any suggestion of `PORTKEY_API_BASE` / `PORTKEY_VIRTUAL_KEY` — the
    gateway uses only `PORTKEY_API_KEY` plus a constant URL from `portkey_ai`.

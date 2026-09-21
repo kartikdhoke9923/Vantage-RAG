@@ -6,14 +6,15 @@ from portkey_ai import PORTKEY_GATEWAY_URL
 
 from app.config import settings
 from app.gateway import pool
-from app.gateway.client import _api_key, _make_headers
+from app.gateway.client import _api_key, _make_headers, gateway_model
 from app.guardrails.colang_rules import COLANG_CONTENT, RAIL_INDICATORS, YAML_CONTENT
 
 _rails: LLMRails | None = None
 
 # Cap the gate's output so a single NeMo rail call can never request huge
 # generations (Groq qwen-style OTPM limits reject requests > 1k output tokens).
-GATE_MAX_TOKENS = 500
+GATE_MAX_TOKENS = 128
+GATE_TIMEOUT = 8.0
 
 
 class _RotatingGuardLLM(ChatOpenAI):
@@ -65,13 +66,16 @@ def _build_guard_llm() -> ChatOpenAI | None:
       3. GROQ_API_KEY set    → free Groq endpoint (GUARDRAIL_MODEL).
       4. None of the above  → guardrails disabled; messages pass through to RAG.
     """
-    llm_kwargs: dict = {"max_tokens": GATE_MAX_TOKENS, "request_timeout": 12.0}
+    llm_kwargs: dict = {"max_tokens": GATE_MAX_TOKENS, "request_timeout": GATE_TIMEOUT}
 
     if settings.OPENAI_API_KEY:
         llm_kwargs["api_key"] = settings.OPENAI_API_KEY
         llm_kwargs["model"] = settings.GUARDRAIL_MODEL or "gpt-5-mini"
     elif settings.PORTKEY_API_KEY:
-        candidates = pool.pick_candidates("guardrails")
+        # Bounded gate: ONE fast Pool pick, never the full rotating chain —
+        # NeMo can fire several LLM calls per message, so a multi-candidate
+        # pipeline multiplies worst-case latency past the Render window.
+        candidates = pool.pick_candidates("guardrails")[:1]
         llms = [
             ChatOpenAI(
                 api_key=_api_key(),
@@ -88,7 +92,7 @@ def _build_guard_llm() -> ChatOpenAI | None:
             llms,
             api_key=_api_key(),
             base_url=PORTKEY_GATEWAY_URL,
-            model=candidates[0],
+            model=candidates[0] if candidates else gateway_model("guardrails"),
             default_headers=_make_headers("guardrails"),
             **llm_kwargs,
         )
@@ -135,6 +139,10 @@ def guard(message: str) -> tuple[bool, str | None]:
     """
     if _rails is None:
         logfire.warning("⚠️ Guardrails not initialised — skipping gate.")
+        return False, None
+
+    if not settings.GUARDRAILS_ENABLED:
+        logfire.info("⏭️ Guardrails disabled (GUARDRAILS_ENABLED=false) — skipping gate.")
         return False, None
 
     with logfire.span("🛡️ Guardrails Check"):
