@@ -73,9 +73,9 @@ git push -u origin main
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
    - `FACT_CHECK_ENABLED` — set **`false`** to skip the extra fact-check LLM hop
      (cuts per-query latency; matches the fast model setup)
-   - `GUARDRAILS_ENABLED` — *optional*; default `true`. The gate is bounded to
-     a single 8s / 128-token call that fails open on error. Set
-     `false` to disable the gate entirely if a slow provider still stalls it.
+   - `GUARDRAILS_ENABLED` — *optional*; default `true`. The gate is a single
+     bounded classifier call (8s timeout / 32 tokens) that fails open on error.
+     Set `false` to disable the gate entirely if a slow provider still stalls it.
 
    Ignore any suggestion of `PORTKEY_API_BASE` / `PORTKEY_VIRTUAL_KEY` — the
    gateway uses only `PORTKEY_API_KEY` plus a constant URL from `portkey_ai`.

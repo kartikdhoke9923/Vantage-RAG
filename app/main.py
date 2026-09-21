@@ -191,8 +191,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Explicit lists, not ["*"]: Starlette compares the preflight method/headers
+    # literally, so a "*" makes every OPTIONS preflight fail with 400.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Serve the embeddable chat widget (loader script + styles) as static files.
