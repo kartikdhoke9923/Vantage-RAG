@@ -65,7 +65,7 @@ def _build_guard_llm() -> ChatOpenAI | None:
       3. GROQ_API_KEY set    → free Groq endpoint (GUARDRAIL_MODEL).
       4. None of the above  → guardrails disabled; messages pass through to RAG.
     """
-    llm_kwargs: dict = {"max_tokens": GATE_MAX_TOKENS}
+    llm_kwargs: dict = {"max_tokens": GATE_MAX_TOKENS, "request_timeout": 40.0}
 
     if settings.OPENAI_API_KEY:
         llm_kwargs["api_key"] = settings.OPENAI_API_KEY
