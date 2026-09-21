@@ -70,6 +70,10 @@ git push -u origin main
    - `LOGFIRE_TOKEN`
    - `ADMIN_TOKEN` — already generated in `.env` as `ADMIN_TOKEN`. Use that
      exact value here **and** in Lovable (`VITE_ADMIN_TOKEN`).
+     > SECURITY: do NOT hardcode this token in a public JS bundle. The site
+     > currently embeds it in `assets/index-*.js`, so rotate it: generate a new
+     > value (`openssl rand -hex 24`), set it in Render **and** Lovable, and
+     > rebuild/redeploy the site so the public bundle stops shipping it.
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
    - `FACT_CHECK_ENABLED` — set **`false`** to skip the extra fact-check LLM hop
      (cuts per-query latency; matches the fast model setup)
@@ -111,11 +115,16 @@ Edit `D:\kartikworks` (details in the repo's own to-do) — the gist:
 
 ```html
 <!-- index.html, before </body> -->
-<script src="https://api.kartikworks.co.in/widget/chat.js"
+<script src="https://api.kartikworks.co.in/widget/chat.js?v=2"
         data-api="https://api.kartikworks.co.in"
         data-title="Ask Kartik"
         data-subtitle="Powered by Vantage RAG"></script>
 ```
+
+`/widget/*` is served with `Cache-Control: no-cache` from the backend, so the
+`?v=` query just force-breaks any intermediate cache on future widget fixes.
+The widget also aborts after 30s and shows a friendly "backend is busy" message
+instead of hanging or surfacing a raw browser NetworkError.
 
 Push + republish via Lovable. Before that, set `VITE_ADMIN_TOKEN` in the
 Lovable project **Environment settings** to the exact `ADMIN_TOKEN` value from

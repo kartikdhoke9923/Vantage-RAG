@@ -25,6 +25,7 @@
   var position = script.getAttribute("data-position") || "right";
   var greeting = script.getAttribute("data-greeting") ||
     "Hi! Ask me about skills, projects, experience, or anything on my portfolio.";
+  var TIMEOUT_MS = 30000; // cap one backend round-trip; show "busy" instead of hanging
 
   if (document.getElementById("vw-root")) return; // already mounted
 
@@ -148,18 +149,23 @@
     typing.textContent = "Vantage is thinking";
 
     var payload = { q: text, thread_id: threadId };
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
     fetch(api.replace(/\/$/, "") + "/query/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     })
       .then(function (resp) {
         if (!resp.ok) {
+          clearTimeout(timer);
           return resp.json().then(function (body) {
             throw new Error((body && body.message) || ("HTTP " + resp.status));
           });
         }
         if (!resp.body) {
+          clearTimeout(timer);
           return resp.json().then(function (data) {
             setBusy(false);
             addMsg(data.answer || "Hmm, I didn't get a response.", "bot");
@@ -170,6 +176,7 @@
         var buffer = "";
         function pump(streamResult) {
           if (streamResult.done) {
+            clearTimeout(timer);
             setBusy(false);
             return;
           }
@@ -177,13 +184,21 @@
           var parts = buffer.split("\n\n");
           buffer = parts.pop();
           parts.forEach(handleEvent);
+          if (buffer.length > 20000) clearTimeout(timer); // stream alive, drop the cap
           return reader.read().then(pump);
         }
         return reader.read().then(pump);
       })
       .catch(function (err) {
+        clearTimeout(timer);
         setBusy(false);
-        showError(err.message || "Something went wrong.");
+        if (err && err.name === "AbortError") {
+          showError("the backend took too long to answer. Please retry.");
+        } else if (err && err.name === "TypeError") {
+          showError("the backend is unreachable right now. Please retry.");
+        } else {
+          showError(err.message || "Something went wrong.");
+        }
       });
   }
 

@@ -202,6 +202,33 @@ _WIDGET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if os.path.isdir(_WIDGET_DIR):
     app.mount("/widget", StaticFiles(directory=_WIDGET_DIR), name="widget")
 
+
+class _NoCacheWidgetMiddleware:
+    """Drop Cache-Control for /widget assets so widget fixes reach browsers on the
+    next reload instead of lingering in caches (browsers + Cloudflare)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").startswith("/widget/"):
+            async def send_with_cache(message):
+                if message["type"] == "http.response.start":
+                    headers = [
+                        h for h in message.get("headers", []) if h[0].lower() != b"cache-control"
+                    ]
+                    headers.append((b"cache-control", b"no-cache, no-store, max-age=0"))
+                    message = {**message, "headers": headers}
+                await send(message)
+
+            await self.app(scope, receive, send_with_cache)
+        else:
+            await self.app(scope, receive, send)
+
+
+if os.path.isdir(_WIDGET_DIR):
+    app.add_middleware(_NoCacheWidgetMiddleware)
+
 # Expose Prometheus metrics at /metrics with default request instrumentation.
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
