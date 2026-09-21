@@ -34,7 +34,6 @@ def _get_pool():
                         settings.POSTGRES_URI,
                         min_size=1,
                         max_size=4,
-                        open=False,  # lazily opens on first checkout
                         timeout=10,
                         kwargs={"connect_timeout": 5, "options": "-c statement_timeout=3000"},
                     )
@@ -46,15 +45,32 @@ def _get_pool():
 
 
 def _conn():
-    """Yield a connection, or None when the DB is unavailable."""
+    """Check out a pooled connection, or None when the DB is unavailable."""
     pool = _get_pool()
     if pool is None:
         return None
     try:
-        return pool.connection()
+        return pool.getconn(timeout=3)
     except Exception as e:
         logfire.warning(f"⚠️ DB pool checkout failed: {e}")
         return None
+
+
+def _release(maybe_conn: Any) -> None:
+    """Return a connection to the pool (or close it if the pool is gone)."""
+    if maybe_conn is None:
+        return
+    pool = _get_pool()
+    if pool is not None:
+        try:
+            pool.putconn(maybe_conn)
+            return
+        except Exception:
+            pass
+    try:
+        maybe_conn.close()
+    except Exception:
+        pass
 
 
 _SCHEMA = """
@@ -103,7 +119,7 @@ def init_db() -> bool:
         logfire.error(f"⚠️ Could not initialise admin tables: {e}")
         return False
     finally:
-        conn.close()
+        _release(conn)
 
 
 # ── chat_logs ─────────────────────────────────────────────────────────────────
@@ -144,7 +160,7 @@ def log_chat(
     except Exception as e:
         logfire.warning(f"⚠️ chat_log insert failed: {e}")
     finally:
-        conn.close()
+        _release(conn)
 
 
 def list_chat_logs(limit: int = 50) -> list[dict[str, Any]]:
@@ -164,7 +180,7 @@ def list_chat_logs(limit: int = 50) -> list[dict[str, Any]]:
         logfire.warning(f"⚠️ chat_logs read failed: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
 
 # ── ingest_jobs ───────────────────────────────────────────────────────────────
@@ -187,7 +203,7 @@ def record_ingest_started(kind: str) -> int | None:
         logfire.warning(f"⚠️ ingest_job start insert failed: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
 
 
 def record_ingest_finished(job_id: int | None, status: str, message: str = "") -> None:
@@ -206,7 +222,7 @@ def record_ingest_finished(job_id: int | None, status: str, message: str = "") -
     except Exception as e:
         logfire.warning(f"⚠️ ingest_job finish update failed: {e}")
     finally:
-        conn.close()
+        _release(conn)
 
 
 def list_ingest_jobs(limit: int = 20) -> list[dict[str, Any]]:
@@ -226,7 +242,7 @@ def list_ingest_jobs(limit: int = 20) -> list[dict[str, Any]]:
         logfire.warning(f"⚠️ ingest_jobs read failed: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
 
 # ── app_settings ─────────────────────────────────────────────────────────────
@@ -244,7 +260,7 @@ def get_setting(key: str, default: str = "") -> str:
     except Exception:
         return default
     finally:
-        conn.close()
+        _release(conn)
 
 
 def set_setting(key: str, value: str) -> None:
@@ -263,7 +279,7 @@ def set_setting(key: str, value: str) -> None:
     except Exception as e:
         logfire.warning(f"⚠️ app_settings write failed: {e}")
     finally:
-        conn.close()
+        _release(conn)
 
 
 def count_chat_logs(hours: int | None = None) -> int:
@@ -284,7 +300,7 @@ def count_chat_logs(hours: int | None = None) -> int:
     except Exception:
         return 0
     finally:
-        conn.close()
+        _release(conn)
 
 
 __all__ = [
