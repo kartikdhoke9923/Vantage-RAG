@@ -1,6 +1,7 @@
 import re
 
 import logfire
+from openai import RateLimitError
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
 from app.agents.state import AgentState
@@ -8,6 +9,7 @@ from app.config import settings
 from app.gateway import cache as gateway_cache
 from app.gateway import extract_cache_status, gateway_model, portkey_client
 from app.gateway import metrics as gateway_metrics
+from app.gateway import pool
 from app.safety.pii import mask_pii
 from app.services.prompts import render_prompt
 
@@ -144,17 +146,31 @@ def generate_node(state: AgentState):
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=5),
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=1, max=3),
     reraise=True,
     before_sleep=before_sleep_log(logfire, "warning"),
 )
 def _generate_response(prompt: str, slug: str | None = None, model: str | None = None):
-    """Call the Portkey LLM gateway with retry logic."""
-    return portkey_client.chat.completions.create(
-        model=gateway_model(slug, model),
-        messages=[{"role": "user", "content": prompt}],
-    )
+    """Call the Portkey LLM gateway, rotating through the model pool on failure."""
+    last_error: Exception | None = None
+    for routing in pool.pick_candidates("responder", slug, model):
+        try:
+            response = portkey_client.chat.completions.create(
+                model=routing,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            pool.mark_success(routing)
+            return response
+        except RateLimitError as e:
+            last_error = e
+            pool.mark_failure(routing, rate_limit=True)
+            logfire.warning(f"⚠️ Responder '{routing}' rate-limited: {e}")
+        except Exception as e:
+            last_error = e
+            pool.mark_failure(routing)
+            logfire.warning(f"⚠️ Responder '{routing}' failed: {e}")
+    raise last_error or RuntimeError("Responder gateway unavailable.")
 
 
 def _generate_response_fallback(prompt: str, slug: str | None, model: str | None):

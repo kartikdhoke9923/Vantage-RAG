@@ -64,8 +64,8 @@ with st.sidebar:
     # --- Gateway (Portkey) switcher ---
     # Lets you fall back to a different provider slug/model per conversation.
     st.markdown("### 🔌 Gateway (Portkey)")
-    default_slug = _get_secret("PORTKEY_PRIMARY_SLUG", os.getenv("PORTKEY_PRIMARY_SLUG", "gemini"))
-    default_model = _get_secret("PORTKEY_PRIMARY_MODEL", os.getenv("PORTKEY_PRIMARY_MODEL", "gemini-3.6-flash"))
+    default_slug = _get_secret("PORTKEY_PRIMARY_SLUG", os.getenv("PORTKEY_PRIMARY_SLUG", "openrouter"))
+    default_model = _get_secret("PORTKEY_PRIMARY_MODEL", os.getenv("PORTKEY_PRIMARY_MODEL", "qwen/qwen3.8-27b:free"))
     gateway_slug = st.text_input("Provider slug", value=default_slug, key="gateway_slug")
     gateway_model = st.text_input("Model", value=default_model, key="gateway_model")
     st.caption(f"Routing as `@{gateway_slug}/{gateway_model}`")
@@ -111,8 +111,8 @@ if prompt := st.chat_input("Ask about your documentation..."):
                         payload = {
                             "q": prompt,
                             "thread_id": st.session_state.session_id,
-                            "slug": st.session_state.get("gateway_slug", "gemini"),
-                            "model": st.session_state.get("gateway_model", "gemini-3.6-flash"),
+                            "slug": st.session_state.get("gateway_slug", "openrouter"),
+                            "model": st.session_state.get("gateway_model", "qwen/qwen3.8-27b:free"),
                         }
 
                         if st.session_state.get("via_stream", False):

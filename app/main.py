@@ -26,20 +26,26 @@ logfire.instrument_openai()
 
 # Now safe to import app modules - logfire is already active
 import json
+import os
 import time
 import traceback
 import uuid
 from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import Counter, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
+from app import db
 from app.agents.graph import build_graph
+from app.admin.routes import router as admin_router
 from app.guardrails import guard, initialize_rails
 from app.health import router as health_router
+from app.ingestion.scheduler import start_scheduler
 from app.logging import set_request_id
 from app.services.health.connection_checker import check_all_connections, log_connection_summary
 
@@ -177,6 +183,22 @@ def rate_limit(times: int = None, seconds: int = None):
 # Initialize FastAPI
 app = FastAPI(title="Vantage RAG API")
 app.include_router(health_router)
+app.include_router(admin_router)
+
+# Cross-origin access for the chat widget + admin page on the portfolio site.
+_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve the embeddable chat widget (loader script + styles) as static files.
+_WIDGET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "widget")
+if os.path.isdir(_WIDGET_DIR):
+    app.mount("/widget", StaticFiles(directory=_WIDGET_DIR), name="widget")
 
 # Expose Prometheus metrics at /metrics with default request instrumentation.
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
@@ -185,6 +207,7 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_sch
 @app.on_event("startup")
 def startup_event():
     initialize_rails()
+    db.init_db()
 
     # Verify all external dependencies are reachable (single probe pass; the
     # cached Redis result is reused by the rate limiter below).
@@ -196,6 +219,9 @@ def startup_event():
     app.state.rate_limiter_enabled = _init_rate_limiter(
         redis_healthy=connection_results["redis"].healthy
     )
+
+    # Daily re-ingestion tick (reads app_settings.cron_enabled from Neon).
+    start_scheduler()
 
     all_healthy = log_connection_summary(connection_results)
     if settings.STRICT_STARTUP and not all_healthy:
@@ -311,6 +337,22 @@ def _response_from_state(q: str, final_output: dict) -> dict:
     }
 
 
+def _log_exchange(q: str, thread_id: str, start: float, final_output: dict | None, cache_hit: str = "none"):
+    """Best-effort row into chat_logs so the admin page can review conversations."""
+    try:
+        db.log_chat(
+            thread_id=thread_id,
+            question=q,
+            answer=final_output.get("final_answer") if final_output else "",
+            status=final_output.get("status") or "error" if final_output else "error",
+            latency_ms=int((time.perf_counter() - start) * 1000),
+            cache_hit=cache_hit,
+            source_count=len(final_output.get("documents") or []) if final_output else 0,
+        )
+    except Exception:  # noqa: BLE001 - logging must never break a response
+        pass
+
+
 @app.post("/query")
 @rate_limit()
 def query(
@@ -347,7 +389,9 @@ def query(
                 request_id=request_id,
                 thread_id=thread_id,
             )
-            return _response_from_state(q, final_output)
+            response = _response_from_state(q, final_output)
+            _log_exchange(q, thread_id, start, final_output)
+            return response
         except Exception as e:
             RAG_REQUESTS_TOTAL.labels(status="error").inc()
             RAG_REQUEST_DURATION.observe(time.perf_counter() - start)
@@ -358,6 +402,7 @@ def query(
                 request_id=request_id,
                 thread_id=thread_id,
             )
+            _log_exchange(q, thread_id, start, None)
             return JSONResponse(
                 status_code=500,
                 content={
@@ -424,6 +469,7 @@ def query_stream(
                     request_id=request_id,
                     thread_id=thread_id,
                 )
+                _log_exchange(q, thread_id, start, final_state)
                 yield sse(
                     {
                         "type": "done",
@@ -445,6 +491,7 @@ def query_stream(
                     request_id=request_id,
                     thread_id=thread_id,
                 )
+                _log_exchange(q, thread_id, start, None)
                 yield sse({"type": "error", "message": f"Failed to process request: {e}"})
 
         return StreamingResponse(

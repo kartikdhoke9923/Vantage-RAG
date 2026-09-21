@@ -1,11 +1,12 @@
 import logfire
 from langchain_openai import ChatOpenAI
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI, OpenAI, RateLimitError
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.config import settings
 from app.gateway import cache
 from app.gateway import metrics as gateway_metrics
+from app.gateway import pool
 
 # Portkey routing strategy:
 #   - Primary/fallback logic lives in a Portkey saved config referenced via the
@@ -172,6 +173,12 @@ def _message_usage(message) -> tuple[int, int]:
     return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
 
 
+def _llm_for_routing(feature: str, routing: str) -> ChatOpenAI:
+    """ChatOpenAI client pinned to a specific @slug/model routing string."""
+    slug, model = pool.routing_parts(routing)
+    return get_langchain_llm(feature, slug, model)
+
+
 def invoke_llm_with_fallback(
     prompt: str,
     feature: str = "rag",
@@ -182,10 +189,11 @@ def invoke_llm_with_fallback(
     Invoke the LLM with an in-code fallback chain and optional Redis caching.
 
     Chain order:
-      1. Portkey gateway with the per-request slug/model override.
-      2. Portkey gateway with settings defaults (covers a bad UI override).
-      3. Direct Groq fallback key → openai/gpt-oss-20b.
-      4. Gate-off: re-raise the last error (never silently swallow failures).
+      1. Portkey gateway, rotating through the per-role model pool — models
+         that fail (e.g. rate-limited) go on cool-down and the next pool model
+         is tried instead. The per-request slug/model override is a last resort.
+      2. Direct Groq fallback key → openai/gpt-oss-20b.
+      3. Gate-off: re-raise the last error (never silently swallow failures).
 
     Each successful call also records tokens + approx cost as Prometheus
     metrics (see gateway/metrics.py). Responses are cached in Redis when the
@@ -194,9 +202,10 @@ def invoke_llm_with_fallback(
     routing_model = gateway_model(slug, model)
 
     def _produce() -> str:
-        attempts: list[tuple[str, ChatOpenAI]] = [(gateway_model(slug, model), get_langchain_llm(feature, slug, model))]
-        if slug or model:
-            attempts.append((gateway_model(), get_langchain_llm(feature)))
+        candidates = [r for r in pool.pick_candidates(feature, slug, model) if r]
+        attempts: list[tuple[str, ChatOpenAI]] = [
+            (r, _llm_for_routing(feature, r)) for r in candidates
+        ]
         fallback = _fallback_groq_llm()
         if fallback is not None:
             attempts.append(("groq-fallback", fallback))
@@ -205,6 +214,8 @@ def invoke_llm_with_fallback(
         for status_label, llm in attempts:
             try:
                 message = llm.invoke(prompt)
+                if status_label != "groq-fallback":
+                    pool.mark_success(status_label)
                 pt, ct = _message_usage(message)
                 gateway_metrics.record_usage(feature, status_label, pt, ct)
                 gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature=feature, status=status_label).inc()
@@ -212,8 +223,16 @@ def invoke_llm_with_fallback(
                     f"🔁 Gateway '{status_label}' ok ({pt} prompt / {ct} completion tokens)."
                 )
                 return message.content
+            except RateLimitError as e:  # noqa: BLE001 - fallback chain requires a blind catch
+                last_error = e
+                if status_label != "groq-fallback":
+                    pool.mark_failure(status_label, rate_limit=True)
+                logfire.error(f"⚠️ Gateway '{status_label}' rate-limited: {e}")
+                gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature=feature, status="error").inc()
             except Exception as e:  # noqa: BLE001 - fallback chain requires a blind catch
                 last_error = e
+                if status_label != "groq-fallback":
+                    pool.mark_failure(status_label)
                 logfire.error(f"⚠️ Gateway '{status_label}' failed: {e}")
                 gateway_metrics.GATEWAY_CALLS_TOTAL.labels(feature=feature, status="error").inc()
 

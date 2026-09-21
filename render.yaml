@@ -1,0 +1,63 @@
+# Render blueprint — deploys the whole thing as one free web service.
+# Point Render at this repo (Native Docker), and the values below plus the
+# secrets group will be provisioned. Custom TLS via api.kartikworks.co.in.
+services:
+  - type: web
+    name: vantage-rag-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    domains:
+      - api.kartikworks.co.in
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://kartikworks.co.in,https://www.kartikworks.co.in
+      - key: APP_BASE_URL
+        value: https://api.kartikworks.co.in
+      - key: GATEWAY_CACHE_ENABLED
+        value: "false"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: STRICT_STARTUP
+        value: "false"
+      # Secrets — set these in the Render dashboard (values never in git):
+      - key: PORTKEY_API_KEY
+        sync: false
+      - key: PORTKEY_PRIMARY_SLUG
+        sync: false
+      - key: PORTKEY_PRIMARY_MODEL
+        sync: false
+      - key: PORTKEY_MODEL_GUARDRAIL
+        sync: false
+      - key: PORTKEY_MODEL_PLANNER
+        sync: false
+      - key: PORTKEY_MODEL_RESPONDER
+        sync: false
+      - key: CHROMA_HOST
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: CHROMA_COLLECTION
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: POSTGRES_URI
+        sync: false
+      - key: LOGFIRE_TOKEN
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_FALLBACK_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
