@@ -50,9 +50,13 @@ git push -u origin main
 3. Pick plan **Free**.
 4. In **Environment**, set the `sync: false` secrets as env vars. Most values
    copy straight from your working `.env`; the complete list is:
-   - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG`, `PORTKEY_PRIMARY_MODEL`
+   - `PORTKEY_API_KEY`, `PORTKEY_PRIMARY_SLUG` (`policy`),
+     `PORTKEY_PRIMARY_MODEL` (`openai/gpt-oss-20b`)
    - `PORTKEY_MODEL_GUARDRAIL`, `PORTKEY_MODEL_PLANNER`,
-     `PORTKEY_MODEL_RESPONDER`
+     `PORTKEY_MODEL_RESPONDER` — set all three to
+     `@policy/openai/gpt-oss-20b` (the one fast/working route in this
+     Portkey workspace; OpenRouter-free is upstream rate-limited, and there
+     is no `groq` slug)
    - `GUARDRAIL_MODEL` — `openai/gpt-oss-20b` (used by the direct-Groq fallback;
      keep the `.env` value)
    - `CHROMA_HOST`, `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`

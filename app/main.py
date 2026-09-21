@@ -433,10 +433,6 @@ def query_stream(
 
     start = time.perf_counter()
     with logfire.span("🔍 /query/stream", request_id=request_id, thread_id=thread_id):
-        decision, payload = _run_gate(q, request_id, thread_id, start)
-        if decision != "allow":
-            return payload
-
         rag_agent = app.state.rag_agent
 
         def sse(data: dict) -> str:
@@ -444,7 +440,23 @@ def query_stream(
 
         def event_stream():
             try:
+                # Emit the start event BEFORE the gate so the client gets bytes
+                # immediately and no request ever sits at 0 bytes.
                 yield sse({"type": "start", "question": q})
+
+                decision, payload = _run_gate(q, request_id, thread_id, start)
+                if decision != "allow":
+                    if isinstance(payload, JSONResponse):
+                        try:
+                            msg = json.loads(payload.body).get("message", "Request blocked.")
+                        except Exception:
+                            msg = "Request blocked."
+                        yield sse({"type": "error", "message": msg})
+                    else:
+                        yield sse({"type": "done", "answer": payload.get("answer", "Blocked."),
+                                   "sources": [], "thought_process": [], "status": "Blocked."})
+                    return
+
                 initial_state = _build_initial_state(q, thread_id, body)
                 config = {"configurable": {"thread_id": thread_id}}
 
