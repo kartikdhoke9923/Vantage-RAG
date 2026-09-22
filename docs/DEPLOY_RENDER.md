@@ -77,9 +77,18 @@ git push -u origin main
    - `GROQ_API_KEY`, `GROQ_FALLBACK_API_KEY`, `GEMINI_API_KEY`
    - `FACT_CHECK_ENABLED` — set **`false`** to skip the extra fact-check LLM hop
      (cuts per-query latency; matches the fast model setup)
-   - `GUARDRAILS_ENABLED` — *optional*; default `true`. The gate is a single
-     bounded classifier call (8s timeout / 32 tokens) that fails open on error.
-     Set `false` to disable the gate entirely if a slow provider still stalls it.
+- `GUARDRAILS_ENABLED` — *optional*; default `true`. The gate is a single
+      bounded classifier call (8s timeout / 32 tokens) that fails open on error.
+      Set `false` to disable the gate entirely if a slow provider still stalls it.
+   - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — *optional*; when set, the daily
+     ingestion and the "Run ingestion" admin button ALSO pull the published
+     "about me" rows from these Supabase tables:
+     `SUPABASE_TABLES` (default `projects,experience_entries,portfolio_tools,resume`).
+     Rows are rendered to text and indexed through the same chunk/embed/Chroma
+     path. Use the **anon/publishable** key of the site's Supabase project; only
+     tables with anon `SELECT` (RLS) are readable.
+   - `WEB_SOURCES_JSON` — *optional*; extra live-page / JSON-array sources, e.g.
+     `[{"url":"https://github.com/you","type":"page","title":"github_profile","source_type":"web"}]`.
 
    Ignore any suggestion of `PORTKEY_API_BASE` / `PORTKEY_VIRTUAL_KEY` — the
    gateway uses only `PORTKEY_API_KEY` plus a constant URL from `portkey_ai`.

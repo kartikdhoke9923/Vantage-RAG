@@ -1,3 +1,4 @@
+import json
 import os
 
 from dotenv import load_dotenv
@@ -109,6 +110,26 @@ class Settings:
     DAILY_INGEST_HOUR = int(os.getenv("DAILY_INGEST_HOUR", "5"))
     # Source type tag applied to ingested docs when data/ has no sub-folders.
     DATA_SOURCE_TYPE = os.getenv("DATA_SOURCE_TYPE", "true")
+    # Optional web/structured ingestion sources (the "about me" live data).
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+    SUPABASE_TABLES = os.getenv("SUPABASE_TABLES", "projects,experience_entries,portfolio_tools,resume")
+    WEB_SOURCES_JSON = os.getenv("WEB_SOURCES_JSON", "")
+
+    @property
+    def supabase_tables(self) -> list[str]:
+        return [t.strip() for t in self.SUPABASE_TABLES.split(",") if t.strip()]
+
+    @property
+    def web_sources(self) -> list[dict]:
+        raw = (self.WEB_SOURCES_JSON or "").strip()
+        if not raw:
+            return []
+        try:
+            items = json.loads(raw)
+            return items if isinstance(items, list) else []
+        except Exception:  # noqa: BLE001 - bad config should not crash the app
+            return []
 
 
 settings = Settings()  # did becuaue directly from environment variables,

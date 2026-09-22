@@ -35,10 +35,11 @@ def ingest_now(kind: str = "manual") -> int | None:
 
 def _run_job(job_id: int) -> None:
     try:
-        from app.ingestion.processor import run_universal_ingestion
+        from app.ingestion.processor import ingest_web_sources, run_universal_ingestion
 
         logfire.info("⏳ Ingestion job started.", job_id=job_id)
         run_universal_ingestion(settings.DATA_DIR, settings.DATA_SOURCE_TYPE, wipe=False)
+        ingest_web_sources(wipe=False)
         db.record_ingest_finished(job_id, "ok", "Ingestion completed.")
         logfire.info("✅ Ingestion job completed.", job_id=job_id)
     except Exception as e:  # noqa: BLE001 - a failed tick must never take the API down

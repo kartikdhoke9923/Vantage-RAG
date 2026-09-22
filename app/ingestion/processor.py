@@ -25,6 +25,7 @@ from app.ingestion.chunkers.splitter import chunk_text, enforce_max_chunk_size
 from app.ingestion.loaders.html import parse_html
 from app.ingestion.loaders.pdf import parse_pdf
 from app.ingestion.loaders.text import parse_text
+from app.ingestion.loaders.web import iter_configured_sources, source_text
 from app.services.retrieval.chroma_client import delete_collection, get_or_create_collection
 from app.services.retrieval.embedding import embed_texts
 
@@ -184,16 +185,62 @@ def reindex_processed_data(processed_dir: str = PROCESSED_DATA_DIR, wipe: bool =
         logfire.info(f"Reindex complete — {total_points} points in '{settings.CHROMA_COLLECTION}'.")
 
 
+def ingest_web_sources(wipe: bool = False, tables: list[str] | None = None) -> int:
+    """Fetch configured web sources (Supabase tables + WEB_SOURCES_JSON), chunk,
+    and index into Chroma. Uses the exact same chunk/index path as local files.
+    Returns the number of indexed points. No-op when no sources are configured."""
+    sources = list(iter_configured_sources())
+    if not sources:
+        logfire.info("No web sources configured — skipping web ingestion.")
+        return 0
+
+    with logfire.span("Web Ingestion Started", sources=[s["title"] for s in sources]):
+        if wipe:
+            with logfire.span("Wiping Collection"):
+                delete_collection()
+        _ensure_collection()
+
+        total_points = 0
+        for src in sources:
+            try:
+                with logfire.span("Web Source", title=src["title"], kind=src["kind"]):
+                    if tables and src.get("table") not in tables and src["kind"] != "page":
+                        logfire.info(f"Skipping '{src['title']}' (not in requested tables).")
+                        continue
+                    text = source_text(src)
+                    if not text.strip():
+                        logfire.warning(f"No text from web source '{src['title']}' — skipping.")
+                        continue
+                    chunks = enforce_max_chunk_size(chunk_text(text))
+                    if not chunks:
+                        continue
+                    processed_data = {
+                        "filename": src["title"],
+                        "source_type": src["source_type"],
+                        "chunks": chunks,
+                    }
+                    save_processed_locally(processed_data, src["source_type"], src["title"])
+                    total_points += _index_chunks(chunks, src["title"], src["source_type"])
+                    logfire.info(f"Indexed web source '{src['title']}' ({len(chunks)} chunks).")
+            except Exception as e:  # noqa: BLE001 - one broken source must not sink the run
+                logfire.error(f"Failed web source '{src['title']}': {e}")
+
+        logfire.info(f"Web ingestion complete — {total_points} points indexed.")
+        return total_points
+
+
 if __name__ == "__main__":
     # Usage:
     #   python -m app.ingestion.processor DATA --wipe
     #   python -m app.ingestion.processor DATA/true_data true
     #   python -m app.ingestion.processor --reindex processed_data --wipe
+    #   python -m app.ingestion.processor --web [--wipe]
     wipe_requested = "--wipe" in sys.argv
     clean_args = [a for a in sys.argv if a != "--wipe"]
 
     reindex_requested = "--reindex" in clean_args
-    target_args = [a for a in clean_args if a != "--reindex"]
+    web_requested = "--web" in clean_args
+    target_args = [a for a in clean_args if a not in ("--reindex", "--web")]
 
     if reindex_requested:
         processed_dir = target_args[1] if len(target_args) > 1 else PROCESSED_DATA_DIR
@@ -202,6 +249,12 @@ if __name__ == "__main__":
             sys.exit(1)
         reindex_processed_data(processed_dir, wipe=wipe_requested)
         logfire.info("Reindex job completed.")
+        sys.exit(0)
+
+    if web_requested:
+        n = ingest_web_sources(wipe=wipe_requested)
+        print(f"Web ingestion indexed {n} points.")
+        logfire.info("Web ingestion job completed.")
         sys.exit(0)
 
     target_dir = target_args[1] if len(target_args) > 1 else "DATA"
