@@ -138,20 +138,15 @@
     }
   }
 
-  function ask(text) {
-    addMsg(text, "user");
-    input.value = "";
-    if (!threadId) {
-      threadId = genThreadId();
-      localStorage.setItem(threadKey, threadId);
-    }
+  function sendQuery(text, attempt) {
     setBusy(true);
     typing.textContent = "Vantage is thinking";
 
     var payload = { q: text, thread_id: threadId };
+    var endpoint = api.replace(/\/$/, "") + "/query/stream";
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
-    fetch(api.replace(/\/$/, "") + "/query/stream", {
+    fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -159,10 +154,7 @@
     })
       .then(function (resp) {
         if (!resp.ok) {
-          clearTimeout(timer);
-          return resp.json().then(function (body) {
-            throw new Error((body && body.message) || ("HTTP " + resp.status));
-          });
+          throw new Error("HTTP " + resp.status);
         }
         if (!resp.body) {
           clearTimeout(timer);
@@ -191,15 +183,39 @@
       })
       .catch(function (err) {
         clearTimeout(timer);
+        var msg = (err && err.message) || "";
+        var transient = (err && err.name === "TypeError") ||
+          /^HTTP (502|503|504|429)/.test(msg);
+        if (transient && attempt === 0) {
+          console.warn("[vantage-widget] transient failure (" +
+            (err && err.name) + " " + msg + ") against " + endpoint +
+            " — retrying once");
+          sendQuery(text, 1);
+          return;
+        }
         setBusy(false);
+        if (transient) {
+          console.warn("[vantage-widget] request failed: " +
+            (err && err.name) + " " + msg + " (url: " + endpoint + ")");
+        }
         if (err && err.name === "AbortError") {
           showError("the backend took too long to answer. Please retry.");
         } else if (err && err.name === "TypeError") {
           showError("the backend is unreachable right now. Please retry.");
         } else {
-          showError(err.message || "Something went wrong.");
+          showError(msg || "Something went wrong.");
         }
       });
+  }
+
+  function ask(text) {
+    addMsg(text, "user");
+    input.value = "";
+    if (!threadId) {
+      threadId = genThreadId();
+      localStorage.setItem(threadKey, threadId);
+    }
+    sendQuery(text, 0);
   }
 
   function showError(msg) {
