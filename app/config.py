@@ -41,6 +41,19 @@ class Settings:
     PORTKEY_MODEL_PLANNER = os.getenv("PORTKEY_MODEL_PLANNER", "")
     PORTKEY_MODEL_RESPONDER = os.getenv("PORTKEY_MODEL_RESPONDER", "")
 
+    # --- Eval judge provider (RAGAS Phase 2) ---
+    # portkey (prod gateway, shared Groq quota) | groq (direct to api.groq.com,
+    # GROQ_FALLBACK key, may share the same org cap) | gemini (OpenAI-compatible
+    # endpoint, separate free quota). Decouples eval scoring from the app's own
+    # LLM budget so one phase can't starve another.
+    EVAL_JUDGE_PROVIDER = os.getenv("EVAL_JUDGE_PROVIDER", "portkey")
+    # Optional explicit judge model; provider-specific defaults apply when empty
+    # (gemini → "gemini-3.6-flash", groq → PORTKEY_PRIMARY_MODEL).
+    EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "")
+    # Embeddings backend for RAGAS scoring: "jina" (API, no torch — default) or
+    # "hf" (local all-MiniLM via sentence-transformers; needs a working torch).
+    EVAL_EMBEDDINGS = os.getenv("EVAL_EMBEDDINGS", "jina")
+
     # --- Guardrails (NeMo) ---
     # LLM used by the NeMo gate. Empty → provider default per rails.py:
     #   OPENAI_API_KEY set → gpt-5-mini; else GROQ_API_KEY → openai/gpt-oss-20b.

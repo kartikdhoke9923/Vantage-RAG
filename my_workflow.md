@@ -19,3 +19,12 @@
 
 - evaluation -  uv run python -m evals.run_evals --metrics
 - live query and response checking 
+
+
+- runing evals
+- ## uvicorn app.main:app --port 8000   # from repo root, with your .env loaded
+ ## The corpus (incl. Supabase projects) must be ingested into the local Chroma, and your Python env needs ragas + sentence-transformers/torch (from full requirements.txt, not slim requirements-prod.txt).
+## Then:
+## python -m evals.run_evals                 # Phase 1 live pipeline + guardrails tests (~15+6 samples × ~10s delay)
+## python -m evals.run_evals --metrics        # + the 6-metric RAGAS pass (~40–50 min, gateway judge)
+

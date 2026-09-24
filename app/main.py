@@ -294,17 +294,19 @@ def _run_gate(
     start: float,
 ) -> tuple[str, dict | None]:
     """
-    Run the guardrails gate. Returns (decision, payload):
-      ("allow", None)            → proceed to the graph
-      ("blocked", dict)          → block response to return to the user
-      ("unavailable", dict)      → 503 JSON (fail-closed)
+    Run the guardrails gate. Returns (decision, payload, gate_state):
+      ("allow", None, "safe"|"skipped-*"|...) → proceed to the graph
+      ("blocked", dict, "blocked")            → block response to return to the user
+      ("unavailable", dict, "error")          → 503 JSON (fail-closed)
+    The third element is the explicit gate state, surfaced in every response so
+    the guardrails eval can tell "gate ran and missed" from "gate never ran".
     """
     try:
-        rail_fired, rail_response = guard(q)
+        rail_fired, rail_response, gate_state = guard(q)
     except Exception as e:
         logfire.error(f"🛡️ Guardrails error: {e}", request_id=request_id, thread_id=thread_id)
         if settings.GUARDRAILS_FAIL_OPEN:
-            rail_fired, rail_response = False, None
+            rail_fired, rail_response, gate_state = False, None, "fail-open-error"
             logfire.warning("🛡️ Fail-open: proceeding to RAG without gate.")
         else:
             RAG_REQUESTS_TOTAL.labels(status="blocked").inc()
@@ -317,8 +319,10 @@ def _run_gate(
                         "request_id": request_id,
                         "status": "error",
                         "message": "Guardrails unavailable. Please try again later.",
+                        "gate": "error",
                     },
                 ),
+                "error",
             )
     if rail_fired:
         GUARDRAILS_BLOCKS_TOTAL.labels(blocked="true").inc()
@@ -333,11 +337,13 @@ def _run_gate(
                 "thought_process": ["Intent: Guardrails Fired", "Retrieval: Skipped"],
                 "status": "Blocked by guardrails.",
                 "sources": [],
+                "gate": gate_state,
             },
+            gate_state,
         )
 
     GUARDRAILS_BLOCKS_TOTAL.labels(blocked="false").inc()
-    return "allow", None
+    return "allow", { "gate": gate_state }, gate_state
 
 
 def _build_initial_state(q: str, thread_id: str, body) -> dict:
@@ -401,7 +407,7 @@ def query(
     start = time.perf_counter()
     with logfire.span("🔍 /query", request_id=request_id, thread_id=thread_id):
         # Gate: run guardrails synchronously so blocked requests never run the graph.
-        decision, payload = _run_gate(q, request_id, thread_id, start)
+        decision, payload, gate_state = _run_gate(q, request_id, thread_id, start)
         if decision != "allow":
             return payload
 
@@ -419,6 +425,7 @@ def query(
                 thread_id=thread_id,
             )
             response = _response_from_state(q, final_output)
+            response["gate"] = gate_state
             _log_exchange(q, thread_id, start, final_output)
             return response
         except Exception as e:
@@ -473,17 +480,18 @@ def query_stream(
                 # immediately and no request ever sits at 0 bytes.
                 yield sse({"type": "start", "question": q})
 
-                decision, payload = _run_gate(q, request_id, thread_id, start)
+                decision, payload, gate_state = _run_gate(q, request_id, thread_id, start)
                 if decision != "allow":
                     if isinstance(payload, JSONResponse):
                         try:
                             msg = json.loads(payload.body).get("message", "Request blocked.")
                         except Exception:
                             msg = "Request blocked."
-                        yield sse({"type": "error", "message": msg})
+                        yield sse({"type": "error", "message": msg, "gate": gate_state})
                     else:
                         yield sse({"type": "done", "answer": payload.get("answer", "Blocked."),
-                                   "sources": [], "thought_process": [], "status": "Blocked."})
+                                   "sources": [], "thought_process": [], "status": "Blocked.",
+                                   "gate": gate_state})
                     return
 
                 initial_state = _build_initial_state(q, thread_id, body)
@@ -520,6 +528,7 @@ def query_stream(
                         "status": final_state.get("status"),
                         "fact_check": final_state.get("fact_check"),
                         "citation_warning": final_state.get("citation_warning"),
+                        "gate": gate_state,
                     }
                 )
             except Exception as e:

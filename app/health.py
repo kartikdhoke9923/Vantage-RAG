@@ -3,6 +3,7 @@ import logfire
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.guardrails.rails import gate_status
 from app.services.health.connection_checker import (
     check_all_connections,
     log_connection_summary,
@@ -20,7 +21,11 @@ def health():
         all_healthy = all(summary.values())
         return JSONResponse(
             status_code=200 if all_healthy else 503,
-            content={"status": "ok" if all_healthy else "degraded", "services": summary},
+            content={
+                "status": "ok" if all_healthy else "degraded",
+                "services": summary,
+                "guardrails": gate_status(),
+            },
         )
 
 

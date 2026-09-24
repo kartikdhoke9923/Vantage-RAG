@@ -9,6 +9,7 @@ Contexts are truncated to 300 chars (2 chunks max) so no single request blows up
 Uses the installed ragas `evaluate()` / Dataset API.
 """
 
+import asyncio
 import sys
 import types
 
@@ -31,6 +32,7 @@ from datasets import Dataset
 from langchain_community.embeddings import (
     HuggingFaceEmbeddings as _LCHuggingFaceEmbeddings,
 )
+from langchain_core.embeddings import Embeddings
 from ragas import evaluate
 from ragas.embeddings.base import LangchainEmbeddingsWrapper
 from ragas.llms.base import LangchainLLMWrapper
@@ -43,7 +45,11 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
+from langchain_openai import ChatOpenAI
+
+from app.config import settings
 from app.gateway.client import get_langchain_llm
+from app.services.retrieval import embedding as _app_embedding
 
 CONTEXT_TRUNCATE = 300  # chars per context chunk — reduces single request token count
 CONTEXT_LIMIT = 2  # number of context chunks passed to RAGAS per sample
@@ -51,18 +57,90 @@ CONTEXT_LIMIT = 2  # number of context chunks passed to RAGAS per sample
 _RUN_CONFIG = RunConfig(timeout=240, max_retries=4, max_wait=60, max_workers=1)
 
 
-def _build_judge():
-    """RAGAS judge via the production Portkey gateway (OpenAI-compatible base URL).
+class _JinaRagasEmbeddings(Embeddings):
+    """RAGAS embeddings backed by the app's Jina API client (torch-free).
 
-    Uses get_langchain_llm directly instead of ragas' llm_factory because the
-    latter builds ChatOpenAI without an api_key and fails on machines that do
-    not export OPENAI_API_KEY. The gateway accepts a placeholder key — Portkey
-    auth travels in x-portkey-* headers.
+    Reuses the exact same Jina key / batching / retry path the app serves RAG
+    with, so no torch or sentence-transformers is needed to score.
     """
-    llm = LangchainLLMWrapper(get_langchain_llm(feature="eval-judge"), run_config=_RUN_CONFIG)
-    embeddings = LangchainEmbeddingsWrapper(
-        _LCHuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    )
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return _app_embedding.embed_texts(list(texts))
+
+    def embed_query(self, text: str) -> list[float]:
+        return _app_embedding.embed_query(text)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return await asyncio.to_thread(self.embed_documents, list(texts))
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return await asyncio.to_thread(self.embed_query, text)
+
+
+def _build_judge():
+    """RAGAS judge via the provider selected by EVAL_JUDGE_PROVIDER.
+
+    portkey (default) → production Portkey gateway (shares the app's Groq TPD).
+    groq             → direct api.groq.com using GROQ_FALLBACK_API_KEY.
+    gemini           → OpenAI-compatible endpoint, free separate quota, no deps.
+
+    Prints the active provider + model before any scoring so results can be
+    traced to the right quota pool (verify the line before trusting numbers).
+    """
+    provider = (settings.EVAL_JUDGE_PROVIDER or "portkey").lower()
+
+    if provider == "groq":
+        judge = ChatOpenAI(
+            model=settings.EVAL_JUDGE_MODEL or "openai/gpt-oss-20b",
+            api_key=settings.GROQ_FALLBACK_API_KEY or settings.GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
+            temperature=0,
+            max_tokens=2048,
+            request_timeout=120.0,
+        )
+    elif provider == "gemini":
+        judge = ChatOpenAI(
+            model=settings.EVAL_JUDGE_MODEL or "gemini-3.6-flash",
+            api_key=settings.GEMINI_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            temperature=0,
+            max_tokens=2048,
+            request_timeout=120.0,
+        )
+    else:
+        if provider != "portkey":
+            logfire.warning(f"Unknown EVAL_JUDGE_PROVIDER '{settings.EVAL_JUDGE_PROVIDER}' — falling back to portkey.")
+        model_override = (settings.EVAL_JUDGE_MODEL or "").strip()
+        if model_override.startswith("@"):
+            # @<slug>/<model> → route the judge through a different Portkey
+            # provider config (separate quota pool) instead of the primary one.
+            slug, _, model = model_override[1:].partition("/")
+            judge = get_langchain_llm(feature="eval-judge", slug=slug, model=model)
+        else:
+            judge = get_langchain_llm(feature="eval-judge")
+        # get_langchain_llm hardcodes a 12s transport timeout and leaves the
+        # output cap at the model default; structured metrics (answer_correctness
+        # etc.) return long JSON and need headroom to avoid truncation.
+        for _attr, _val in (("max_tokens", 2048), ("request_timeout", 120.0)):
+            try:
+                setattr(judge, _attr, _val)
+            except Exception:  # noqa: BLE001 - pydantic may freeze the field
+                pass
+
+    model_label = getattr(judge, "model_name", None) or getattr(judge, "model", None) or "?"
+    try:
+        print(f"🧪 RAGAS judge → provider={provider} model={model_label}")
+    except UnicodeEncodeError:  # cp1252 / redirected console
+        print(f"[RAGAS judge] provider={provider} model={model_label}")
+    logfire.info("🧪 RAGAS judge selected", provider=provider, model=model_label)
+
+    llm = LangchainLLMWrapper(judge, run_config=_RUN_CONFIG)
+    if (settings.EVAL_EMBEDDINGS or "jina").lower() == "hf":
+        embeddings = LangchainEmbeddingsWrapper(
+            _LCHuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        )
+    else:
+        embeddings = LangchainEmbeddingsWrapper(_JinaRagasEmbeddings())
     return llm, embeddings
 
 

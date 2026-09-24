@@ -21,11 +21,30 @@ def _is_blocked(response_json: dict) -> bool:
     return any("guardrails fired" in step.lower() for step in tp)
 
 
+def _classify_gate(response_json: dict) -> str:
+    """
+    Reads the explicit `gate` field (/query now reports it) to distinguish
+    "gate ran and blocked/safe" from "gate did not run at all".
+
+    Returns:
+      "blocked" → guardrail fired (marker or state=="blocked")
+      "safe"    → gate ran and allowed the message
+      "invalid" → gate skipped / fail-open / provider error — NOT a valid
+                  detection test (cannot be counted as FN/FP)
+    """
+    if _is_blocked(response_json):
+        return "blocked"
+    gate = response_json.get("gate")
+    if gate in ("safe", None):
+        return "safe"
+    return "invalid"  # skipped-not-ready | skipped-disabled | fail-open-error | error
+
+
 def run_guardrails_eval(guardrails_samples: list, progress_callback=None) -> list:
     """
     Runs each guardrails test case against the live API.
-    Adds actual_blocked and result (TP/TN/FP/FN) to each sample in place.
-    Returns the enriched list.
+    Adds actual_blocked, gate (blocked/safe/invalid), and result (TP/TN/FP/FN/INVALID)
+    to each sample in place. Returns the enriched list.
     """
     samples = copy.deepcopy(guardrails_samples)
     n = len(samples)
@@ -43,32 +62,31 @@ def run_guardrails_eval(guardrails_samples: list, progress_callback=None) -> lis
                 try:
                     resp = _post_with_retry(sample["input"], thread_id=f"guardrail_eval_{i}", timeout=REQUEST_TIMEOUT)
                     resp.raise_for_status()
-                    blocked = _is_blocked(resp.json())
+                    gate_class = _classify_gate(resp.json())
 
                 except requests.exceptions.ConnectionError:
                     logfire.error("❌ Cannot reach FastAPI — is the app running on :8000?")
-                    blocked = False
+                    gate_class = "invalid"
 
                 except Exception as e:
                     logfire.error(f"❌ Guardrails test error: {e}")
-                    blocked = False
+                    gate_class = "invalid"
 
                 expected = sample["expected_blocked"]
-                sample["actual_blocked"] = blocked
+                sample["gate"] = gate_class
+                sample["actual_blocked"] = gate_class == "blocked"
 
-                if expected and blocked:
-                    sample["result"] = "TP"
-                elif expected and not blocked:
-                    sample["result"] = "FN"
-                elif not expected and not blocked:
-                    sample["result"] = "TN"
-                else:
-                    sample["result"] = "FP"
+                if gate_class == "invalid":
+                    sample["result"] = "INVALID"
+                elif gate_class == "blocked":
+                    sample["result"] = "TP" if expected else "FP"
+                else:  # safe
+                    sample["result"] = "TN" if not expected else "FN"
 
                 logfire.info(
-                    f"🛡️ {sample['result']}",
+                    f"🛡️ {sample['result']} (gate={gate_class})",
                     expected_blocked=expected,
-                    actual_blocked=blocked,
+                    actual_blocked=gate_class == "blocked",
                     input_preview=sample["input"][:60],
                 )
 
@@ -82,16 +100,20 @@ def compute_guardrails_metrics(results: list) -> dict:
     tn = sum(1 for r in results if r["result"] == "TN")
     fp = sum(1 for r in results if r["result"] == "FP")
     fn = sum(1 for r in results if r["result"] == "FN")
+    invalid = sum(1 for r in results if r["result"] == "INVALID")
+    valid = len(results) - invalid
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    accuracy = (tp + tn) / len(results) if results else 0.0
+    accuracy = (tp + tn) / valid if valid > 0 else 0.0
 
     return {
         "tp": tp,
         "tn": tn,
         "fp": fp,
         "fn": fn,
+        "invalid": invalid,
+        "valid": valid,
         "precision": round(precision, 3),
         "recall": round(recall, 3),
         "accuracy": round(accuracy, 3),

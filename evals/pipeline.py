@@ -129,6 +129,11 @@ def run_pipeline(golden_dataset: dict, progress_callback=None) -> dict:
                         for s in sources[:5]
                     ]
                     sample["actual_tools_called"] = [detect_tool(thought_process)]
+                    # Store the explicit gate state + raw plan so the report can
+                    # distinguish "gate blocked it" from "gate never ran" and we
+                    # can debug routing without re-running anything.
+                    sample["gate"] = data.get("gate")
+                    sample["thought_process"] = thought_process
 
                     logfire.info(
                         "✅ Response captured",
@@ -142,12 +147,16 @@ def run_pipeline(golden_dataset: dict, progress_callback=None) -> dict:
                     sample["actual_response"] = ""
                     sample["actual_contexts"] = sample.get("relevant_contexts", [])
                     sample["actual_tools_called"] = ["unknown"]
+                    sample["gate"] = "invalid"
+                    sample["thought_process"] = []
 
                 except Exception as e:
                     logfire.error(f"❌ Query failed: {e}")
                     sample["actual_response"] = ""
                     sample["actual_contexts"] = sample.get("relevant_contexts", [])
                     sample["actual_tools_called"] = ["unknown"]
+                    sample["gate"] = "invalid"
+                    sample["thought_process"] = []
 
             if progress_callback:
                 progress_callback(i, n, question, "done", sample["actual_response"])
